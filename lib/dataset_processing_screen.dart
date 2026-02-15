@@ -1,3 +1,4 @@
+// ignore_for_file: deprecated_member_use
 import 'dart:io';
 import 'package:flutter/material.dart';
 import 'package:path_provider/path_provider.dart';
@@ -48,6 +49,7 @@ class _DatasetProcessingScreenState extends State<DatasetProcessingScreen> {
   final TextEditingController _classIdController = TextEditingController(
     text: '0',
   );
+  String _exportFormat = 'tree'; // 'tree' or 'yolo'
 
   bool _isProcessing = false;
   double _progress = 0.0;
@@ -129,6 +131,7 @@ class _DatasetProcessingScreenState extends State<DatasetProcessingScreen> {
         normalizeNames: _normalizeNames,
         generateYolo: _generateYolo,
         classId: int.tryParse(_classIdController.text) ?? 0,
+        exportFormat: _exportFormat,
         onProgress: (current, total) {
           setState(() {
             _progress = current / total;
@@ -318,6 +321,39 @@ class _DatasetProcessingScreenState extends State<DatasetProcessingScreen> {
                       keyboardType: TextInputType.number,
                     ),
                   ),
+              ],
+            ),
+            const SizedBox(height: 16),
+
+            _buildSection(
+              title: 'Export Format',
+              icon: Icons.output_rounded,
+              color: Colors.teal,
+              children: [
+                RadioListTile<String>(
+                  title: const Text('Standard (Tree Structure)'),
+                  subtitle: const Text('train/class_name/image.jpg'),
+                  value: 'tree',
+                  groupValue: _exportFormat,
+                  activeColor: Colors.teal,
+                  onChanged: (val) => setState(() => _exportFormat = val!),
+                ),
+                RadioListTile<String>(
+                  title: const Text('YOLO Format'),
+                  subtitle: const Text('data.yaml, train/images, train/labels'),
+                  value: 'yolo',
+                  groupValue: _exportFormat,
+                  activeColor: Colors.teal,
+                  onChanged: (val) {
+                    setState(() {
+                      _exportFormat = val!;
+                      if (_exportFormat == 'yolo') {
+                        _generateYolo = true;
+                        _generateLabels = false;
+                      }
+                    });
+                  },
+                ),
               ],
             ),
             const SizedBox(height: 16),

@@ -26,6 +26,7 @@ class ProcessingService {
     bool normalizeNames = false,
     bool generateYolo = false,
     int classId = 0, // Default to 0 if not specified
+    String exportFormat = 'tree', // 'tree' or 'yolo'
     required Function(int, int) onProgress, // current, total
   }) async {
     try {
@@ -85,15 +86,39 @@ class ProcessingService {
           }
         }
 
-        Directory destFolder = subFolder.isEmpty
-            ? outputDir
-            : Directory(path.join(outputDir.path, subFolder));
+        Directory destFolder;
+        Directory imagesFolder;
+        Directory labelsFolder;
 
-        // Create Class Subfolder to preserve hierarchy
-        destFolder = Directory(path.join(destFolder.path, className));
+        if (exportFormat == 'yolo') {
+          // YOLO Structure: split/images and split/labels
+          final splitDir = subFolder.isEmpty
+              ? outputDir
+              : Directory(path.join(outputDir.path, subFolder));
+          imagesFolder = Directory(path.join(splitDir.path, 'images'));
+          labelsFolder = Directory(path.join(splitDir.path, 'labels'));
 
-        if (!await destFolder.exists()) {
-          await destFolder.create(recursive: true);
+          if (!await imagesFolder.exists()) {
+            await imagesFolder.create(recursive: true);
+          }
+          if (!await labelsFolder.exists()) {
+            await labelsFolder.create(recursive: true);
+          }
+
+          destFolder = imagesFolder; // Images go here
+        } else {
+          // Tree Structure: split/class_name
+          Directory splitDir = subFolder.isEmpty
+              ? outputDir
+              : Directory(path.join(outputDir.path, subFolder));
+
+          destFolder = Directory(path.join(splitDir.path, className));
+          if (!await destFolder.exists()) {
+            await destFolder.create(recursive: true);
+          }
+          imagesFolder = destFolder;
+          labelsFolder =
+              destFolder; // In tree format, labels (if valid) might sit with images or just be ignored
         }
 
         // Read image
@@ -147,15 +172,17 @@ class ProcessingService {
               .toList();
 
           // Write to destination
+          final targetDest = exportFormat == 'yolo' ? labelsFolder : destFolder;
           final destTxtPath = path.join(
-            destFolder.path,
+            targetDest.path,
             '${path.basenameWithoutExtension(finalFileName)}.txt',
           );
           await File(destTxtPath).writeAsString(lines.join('\n'));
         } else if (generateYolo) {
           // Generate dummy only if requested and no manual labels exist
+          final targetDest = exportFormat == 'yolo' ? labelsFolder : destFolder;
           final yoloPath = path.join(
-            destFolder.path,
+            targetDest.path,
             '${path.basenameWithoutExtension(finalFileName)}.txt',
           );
           await File(yoloPath).writeAsString("$classId 0.5 0.5 1.0 1.0");
@@ -187,6 +214,8 @@ class ProcessingService {
             generateYolo: generateYolo,
             classId: classId,
             annotations: annotations,
+            exportFormat: exportFormat,
+            labelsFolder: exportFormat == 'yolo' ? labelsFolder : destFolder,
           );
         }
 
@@ -202,6 +231,15 @@ class ProcessingService {
         // But since this is per-folder processing, we might be writing per class.
         // Let's write as ${className}_labels.csv to be safe.
         await File(csvPath).writeAsString(csvBuffer.toString());
+      }
+
+      // Generate data.yaml for YOLO
+      if (exportFormat == 'yolo') {
+        await _generateDataYaml(
+          outputDir: outputDir,
+          className: className,
+          classId: classId,
+        );
       }
     } catch (e) {
       debugPrint('Error processing dataset: $e');
@@ -220,6 +258,8 @@ class ProcessingService {
     required bool generateYolo,
     required int classId,
     List<Annotation>? annotations,
+    required String exportFormat,
+    required Directory labelsFolder,
   }) async {
     if (flipH) {
       final augmented = img.copyFlip(
@@ -242,11 +282,11 @@ class ProcessingService {
           );
         }).toList();
         await File(
-          path.join(destFolder.path, '${baseName}_flipH.txt'),
+          path.join(labelsFolder.path, '${baseName}_flipH.txt'),
         ).writeAsString(newAnns.map((a) => a.toYoloLine()).join('\n'));
       } else if (generateYolo) {
         await File(
-          path.join(destFolder.path, '${baseName}_flipH.txt'),
+          path.join(labelsFolder.path, '${baseName}_flipH.txt'),
         ).writeAsString("$classId 0.5 0.5 1.0 1.0");
       }
     }
@@ -271,11 +311,11 @@ class ProcessingService {
           );
         }).toList();
         await File(
-          path.join(destFolder.path, '${baseName}_flipV.txt'),
+          path.join(labelsFolder.path, '${baseName}_flipV.txt'),
         ).writeAsString(newAnns.map((a) => a.toYoloLine()).join('\n'));
       } else if (generateYolo) {
         await File(
-          path.join(destFolder.path, '${baseName}_flipV.txt'),
+          path.join(labelsFolder.path, '${baseName}_flipV.txt'),
         ).writeAsString("$classId 0.5 0.5 1.0 1.0");
       }
     }
@@ -287,7 +327,7 @@ class ProcessingService {
       ).writeAsBytes(img.encodeJpg(augmented1));
       if (generateYolo) {
         await File(
-          path.join(destFolder.path, '${baseName}_rot15.txt'),
+          path.join(labelsFolder.path, '${baseName}_rot15.txt'),
         ).writeAsString("$classId 0.5 0.5 1.0 1.0");
       }
 
@@ -298,7 +338,7 @@ class ProcessingService {
       ).writeAsBytes(img.encodeJpg(augmented2));
       if (generateYolo) {
         await File(
-          path.join(destFolder.path, '${baseName}_rotN15.txt'),
+          path.join(labelsFolder.path, '${baseName}_rotN15.txt'),
         ).writeAsString("$classId 0.5 0.5 1.0 1.0");
       }
     }
@@ -310,9 +350,57 @@ class ProcessingService {
       ).writeAsBytes(img.encodeJpg(augmented));
       if (generateYolo) {
         await File(
-          path.join(destFolder.path, '${baseName}_gray.txt'),
+          path.join(labelsFolder.path, '${baseName}_gray.txt'),
         ).writeAsString("$classId 0.5 0.5 1.0 1.0");
       }
     }
+  }
+
+  Future<void> _generateDataYaml({
+    required Directory outputDir,
+    required String className,
+    required int classId,
+  }) async {
+    // In a real multi-class scenario, we'd overlap or merge yamls.
+    // Here we assume single class export per run or simple append.
+    // But usually, we process the whole dataset which might have multiple classes.
+    // The current ProcessingService processes ONE sourceDir (one class usually) at a time.
+    // This is a limitation for generating a GLOBAL data.yaml.
+    // However, we can check if data.yaml exists and append the class name if not present.
+
+    final yamlPath = path.join(outputDir.path, 'data.yaml');
+    final file = File(yamlPath);
+
+    // We will blindly overwrite or write a simple single-class yaml for now as per requirements
+    // To support multi-class properly, we'd need to know ALL classes upfront or
+    // read existing yaml.
+
+    // Let's read existing if available to append class?
+    // Parsing YAML manually is hard.
+    // Let's generic a generic template that works for specific single class runs
+    // OR if we assume the user processes multiple classes into the SAME outputDir,
+    // we might want to consolidate.
+
+    // For now, simpler approach: Write a specific YAML for THIS class run.
+    // WARNING: If user runs multiple classes, this might overwrite.
+    // Ideally, specific class names should be collected.
+
+    // Let's assume standard 'classes.txt' exists in outputDir?
+    // Or just write a generic one.
+
+    String content =
+        '''
+train: ./train/images
+val: ./valid/images
+test: ./test/images
+
+nc: ${classId + 1}
+names: ['$className']
+''';
+    // If we want to support appending, we'd need a more robust system.
+    // Given the current architecture (processDataset runs on one folder),
+    // we might just write it.
+
+    await file.writeAsString(content);
   }
 }
