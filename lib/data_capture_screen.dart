@@ -1,5 +1,6 @@
 import 'dart:io';
 import 'dart:convert';
+import 'dart:math' as math;
 
 import 'package:camera/camera.dart';
 import 'package:flutter/material.dart';
@@ -7,8 +8,10 @@ import 'package:path_provider/path_provider.dart';
 import 'package:permission_handler/permission_handler.dart';
 import 'package:flutter/services.dart';
 import 'package:image/image.dart' as img;
+import 'package:google_fonts/google_fonts.dart';
 import 'image_preview_screen.dart';
 import 'widgets/custom_animations.dart';
+import 'services/localization_service.dart';
 
 class DataCaptureScreen extends StatefulWidget {
   final String folderName;
@@ -30,7 +33,8 @@ class DataCaptureScreen extends StatefulWidget {
   State<DataCaptureScreen> createState() => _DataCaptureScreenState();
 }
 
-class _DataCaptureScreenState extends State<DataCaptureScreen> {
+class _DataCaptureScreenState extends State<DataCaptureScreen>
+    with TickerProviderStateMixin {
   CameraController? _controller;
   Future<void>? _initializeControllerFuture;
   bool _isCameraInitialized = false;
@@ -39,11 +43,20 @@ class _DataCaptureScreenState extends State<DataCaptureScreen> {
   bool _isFlashOn = false;
   bool _showBlink = false;
   String? _lastCapturedImagePath;
+  late AnimationController _focusController;
+  late Animation<double> _focusAnimation;
 
   @override
   void initState() {
     super.initState();
     _initializeCamera();
+    _focusController = AnimationController(
+      vsync: this,
+      duration: const Duration(seconds: 2),
+    )..repeat(reverse: true);
+    _focusAnimation = Tween<double>(begin: 1.0, end: 1.1).animate(
+      CurvedAnimation(parent: _focusController, curve: Curves.easeInOut),
+    );
   }
 
   Future<void> _initializeCamera() async {
@@ -71,7 +84,9 @@ class _DataCaptureScreenState extends State<DataCaptureScreen> {
             firstCamera,
             preset,
             enableAudio: false,
-            // fps optimization could be added here if needed
+            imageFormatGroup: Platform.isAndroid
+                ? ImageFormatGroup.jpeg
+                : ImageFormatGroup.bgra8888,
           );
 
           _initializeControllerFuture = _controller!.initialize();
@@ -84,10 +99,10 @@ class _DataCaptureScreenState extends State<DataCaptureScreen> {
             });
           }
         } else {
-          _showError('No cameras found');
+          _showError(LocalizationService.get('no_cameras'));
         }
       } catch (e) {
-        _showError('Error initializing camera: $e');
+        _showError('${LocalizationService.get('camera_init_error')}: $e');
       }
     } else {
       _showError('Camera permission denied');
@@ -96,15 +111,16 @@ class _DataCaptureScreenState extends State<DataCaptureScreen> {
 
   void _showError(String message) {
     if (mounted) {
-      ScaffoldMessenger.of(
-        context,
-      ).showSnackBar(SnackBar(content: Text(message)));
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text(message), backgroundColor: Colors.red),
+      );
     }
   }
 
   @override
   void dispose() {
     _controller?.dispose();
+    _focusController.dispose();
     super.dispose();
   }
 
@@ -139,12 +155,6 @@ class _DataCaptureScreenState extends State<DataCaptureScreen> {
     try {
       await _initializeControllerFuture;
 
-      // Save to application directory
-      // Use logical structure: /Documents/{datasetType}/{folderName}/{timestamp}.jpg
-      // Note: User wanted app internal storage but visible.
-      // We will use: getExternalStorageDirectory (Android) or getApplicationDocumentsDirectory (others)
-      // And append formatted path.
-
       Directory? directory;
       if (Platform.isAndroid) {
         directory = await getExternalStorageDirectory();
@@ -171,7 +181,7 @@ class _DataCaptureScreenState extends State<DataCaptureScreen> {
         capturedFiles.add(xFile);
 
         // Haptic Feedback
-        await HapticFeedback.mediumImpact();
+        await HapticFeedback.heavyImpact();
 
         // Visual feedback (Blink)
         setState(() {
@@ -190,7 +200,10 @@ class _DataCaptureScreenState extends State<DataCaptureScreen> {
       if (mounted) {
         if (widget.burstSize > 1) {
           ScaffoldMessenger.of(context).showSnackBar(
-            const SnackBar(content: Text('Processing images... please wait.')),
+            SnackBar(
+              content: Text(LocalizationService.get('processing_images')),
+              backgroundColor: Colors.black87,
+            ),
           );
         }
       }
@@ -207,7 +220,7 @@ class _DataCaptureScreenState extends State<DataCaptureScreen> {
         final rawImage = img.decodeImage(await imageFile.readAsBytes());
 
         if (rawImage != null) {
-          // 1. Crop
+          // 1. Crop (Always Center Crop for Square Output)
           final size = rawImage.width < rawImage.height
               ? rawImage.width
               : rawImage.height;
@@ -224,6 +237,7 @@ class _DataCaptureScreenState extends State<DataCaptureScreen> {
             croppedImage,
             width: widget.outputResolution,
             height: widget.outputResolution,
+            interpolation: img.Interpolation.cubic,
           );
 
           // Generate Metadata
@@ -297,13 +311,14 @@ class _DataCaptureScreenState extends State<DataCaptureScreen> {
         ScaffoldMessenger.of(context).showSnackBar(
           SnackBar(
             content: Text(
-              'Saved ${capturedFiles.length} images to ${widget.folderName}',
+              '${LocalizationService.get('saved_images')} ${capturedFiles.length} ${LocalizationService.get('images')} to ${widget.folderName}',
             ),
+            backgroundColor: Colors.green,
           ),
         );
       }
     } catch (e) {
-      _showError('Error capturing image: $e');
+      _showError('${LocalizationService.get('capture_error')}: $e');
     } finally {
       if (mounted) {
         setState(() {
@@ -339,6 +354,9 @@ class _DataCaptureScreenState extends State<DataCaptureScreen> {
 
   @override
   Widget build(BuildContext context) {
+    final size = MediaQuery.of(context).size;
+    final squareSize = math.min(size.width, size.height) * 0.9;
+
     return Scaffold(
       backgroundColor: Colors.black,
       appBar: AppBar(
@@ -347,93 +365,140 @@ class _DataCaptureScreenState extends State<DataCaptureScreen> {
           children: [
             Text(
               widget.folderName,
-              style: const TextStyle(fontSize: 16, fontWeight: FontWeight.bold),
+              style: GoogleFonts.poppins(
+                fontSize: 18,
+                fontWeight: FontWeight.bold,
+                color: Colors.white,
+              ),
             ),
-            Text(
-              '${widget.outputResolution}px • ${widget.frameSize}x Quality',
-              style: const TextStyle(fontSize: 12, color: Colors.white70),
+            Row(
+              children: [
+                Container(
+                  padding: const EdgeInsets.symmetric(
+                    horizontal: 6,
+                    vertical: 2,
+                  ),
+                  decoration: BoxDecoration(
+                    color: Colors.yellowAccent.withValues(alpha: 0.2),
+                    borderRadius: BorderRadius.circular(4),
+                  ),
+                  child: Text(
+                    '${widget.frameSize}x ${LocalizationService.get('quality')}',
+                    style: GoogleFonts.inter(
+                      fontSize: 10,
+                      color: Colors.yellowAccent,
+                      fontWeight: FontWeight.bold,
+                    ),
+                  ),
+                ),
+                const SizedBox(width: 8),
+                Text(
+                  'To: ${widget.outputResolution}px',
+                  style: GoogleFonts.inter(fontSize: 10, color: Colors.white70),
+                ),
+              ],
             ),
           ],
         ),
-        backgroundColor: Colors.black54,
-        iconTheme: const IconThemeData(color: Colors.white),
-        titleTextStyle: const TextStyle(color: Colors.white),
+        backgroundColor: Colors.black.withValues(alpha: 0.5),
+        toolbarHeight: 70,
+        elevation: 0,
+        leading: IconButton(
+          icon: const Icon(
+            Icons.arrow_back_ios_new_rounded,
+            color: Colors.white,
+          ),
+          onPressed: () => Navigator.of(context).pop(),
+        ),
         actions: [
           if (_isCameraInitialized)
-            IconButton(
-              icon: Icon(
-                _isFlashOn ? Icons.flash_on : Icons.flash_off,
-                color: Colors.white,
+            Padding(
+              padding: const EdgeInsets.only(right: 16.0),
+              child: IconButton(
+                icon: Icon(
+                  _isFlashOn ? Icons.flash_on_rounded : Icons.flash_off_rounded,
+                  color: _isFlashOn ? Colors.yellow : Colors.white,
+                ),
+                style: IconButton.styleFrom(
+                  backgroundColor: Colors.white.withValues(alpha: 0.1),
+                ),
+                onPressed: _toggleFlash,
               ),
-              onPressed: _toggleFlash,
             ),
         ],
       ),
+      extendBodyBehindAppBar: true,
       body: Stack(
         fit: StackFit.expand,
         children: [
           _isCameraInitialized
               ? CameraPreview(_controller!)
-              : const Center(child: CircularProgressIndicator()),
+              : const Center(
+                  child: CircularProgressIndicator(color: Colors.tealAccent),
+                ),
 
           // Professional Scanner Overlay (CustomPainter)
           if (_isCameraInitialized)
             CustomPaint(
               painter: ScannerOverlayPainter(
-                boxSize: MediaQuery.of(context).size.width * 0.9,
-                borderRadius: 20,
+                boxSize: squareSize,
+                borderRadius: 24,
               ),
               child: Container(),
             ),
 
-          // Corner Guides (Separate from Painter to keep them white and crisp on top)
+          // Corner Guides (Animated Pulse)
           if (_isCameraInitialized)
             Center(
-              child: Container(
-                width: MediaQuery.of(context).size.width * 0.9,
-                height: MediaQuery.of(context).size.width * 0.9,
-                decoration: BoxDecoration(
-                  borderRadius: BorderRadius.circular(20),
-                  // No border, just corners
-                ),
-                child: Column(
-                  mainAxisAlignment: MainAxisAlignment.spaceBetween,
-                  children: [
-                    Row(
-                      mainAxisAlignment: MainAxisAlignment.spaceBetween,
-                      children: [
-                        _CornerGuide(rotation: 0),
-                        _CornerGuide(rotation: 90),
-                      ],
-                    ),
-                    const Spacer(),
-                    Container(
-                      padding: const EdgeInsets.symmetric(
-                        horizontal: 12,
-                        vertical: 6,
+              child: ScaleTransition(
+                scale: _focusAnimation,
+                child: Container(
+                  width: squareSize,
+                  height: squareSize,
+                  decoration: BoxDecoration(
+                    borderRadius: BorderRadius.circular(24),
+                    // No border, just corners
+                  ),
+                  child: Column(
+                    mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                    children: [
+                      Row(
+                        mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                        children: [
+                          _CornerGuide(rotation: 0),
+                          _CornerGuide(rotation: 90),
+                        ],
                       ),
-                      decoration: BoxDecoration(
-                        color: Colors.black54,
-                        borderRadius: BorderRadius.circular(16),
-                      ),
-                      child: Text(
-                        "${widget.frameSize}x${widget.frameSize}",
-                        style: const TextStyle(
-                          color: Colors.white,
-                          fontSize: 12,
-                          fontWeight: FontWeight.bold,
+                      const Spacer(),
+                      // Center Reticle
+                      Container(
+                        width: 20,
+                        height: 20,
+                        decoration: BoxDecoration(
+                          color: Colors.white.withValues(alpha: 0.3),
+                          shape: BoxShape.circle,
+                        ),
+                        child: Center(
+                          child: Container(
+                            width: 4,
+                            height: 4,
+                            decoration: const BoxDecoration(
+                              color: Colors.redAccent,
+                              shape: BoxShape.circle,
+                            ),
+                          ),
                         ),
                       ),
-                    ),
-                    const Spacer(),
-                    Row(
-                      mainAxisAlignment: MainAxisAlignment.spaceBetween,
-                      children: [
-                        _CornerGuide(rotation: -90),
-                        _CornerGuide(rotation: 180),
-                      ],
-                    ),
-                  ],
+                      const Spacer(),
+                      Row(
+                        mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                        children: [
+                          _CornerGuide(rotation: -90),
+                          _CornerGuide(rotation: 180),
+                        ],
+                      ),
+                    ],
+                  ),
                 ),
               ),
             ),
@@ -442,8 +507,8 @@ class _DataCaptureScreenState extends State<DataCaptureScreen> {
           if (_lastCapturedImagePath != null)
             Positioned(
               left: 30,
-              bottom: 30,
-              child: GestureDetector(
+              bottom: 40,
+              child: ScaleButton(
                 onTap: () {
                   Navigator.push(
                     context,
@@ -467,23 +532,65 @@ class _DataCaptureScreenState extends State<DataCaptureScreen> {
                       image: FileImage(File(_lastCapturedImagePath!)),
                       fit: BoxFit.cover,
                     ),
+                    boxShadow: [
+                      BoxShadow(
+                        color: Colors.black.withValues(alpha: 0.5),
+                        blurRadius: 10,
+                      ),
+                    ],
                   ),
                 ),
               ),
             ),
 
+          // Helper Info
+          Positioned(
+            bottom: 140,
+            left: 0,
+            right: 0,
+            child: Center(
+              child: Container(
+                padding: const EdgeInsets.symmetric(
+                  horizontal: 16,
+                  vertical: 8,
+                ),
+                decoration: BoxDecoration(
+                  color: Colors.black54,
+                  borderRadius: BorderRadius.circular(20),
+                ),
+                child: Text(
+                  widget.burstSize > 1
+                      ? "${LocalizationService.get('burst_mode')}: ${widget.burstSize} ${LocalizationService.get('burst_shots')}"
+                      : LocalizationService.get('single_shot'),
+                  style: GoogleFonts.inter(
+                    color: Colors.white,
+                    fontSize: 12,
+                    fontWeight: FontWeight.w500,
+                  ),
+                ),
+              ),
+            ),
+          ),
+
           if (_isProcessing)
             Container(
-              color: Colors.black87,
+              color: Colors.black.withValues(alpha: 0.85),
               child: Center(
                 child: Column(
                   mainAxisSize: MainAxisSize.min,
                   children: [
-                    const CircularProgressIndicator(color: Colors.white),
+                    const SizedBox(
+                      height: 20,
+                      width: 20,
+                      child: CircularProgressIndicator(
+                        color: Colors.white,
+                        strokeWidth: 2,
+                      ),
+                    ),
                     const SizedBox(height: 24),
                     Text(
-                      'Processing $_currentBurstCount/${widget.burstSize}',
-                      style: const TextStyle(
+                      '${LocalizationService.get('processing_images')} $_currentBurstCount/${widget.burstSize}',
+                      style: GoogleFonts.inter(
                         color: Colors.white,
                         fontSize: 24,
                         fontWeight: FontWeight.w300,
@@ -491,9 +598,12 @@ class _DataCaptureScreenState extends State<DataCaptureScreen> {
                       ),
                     ),
                     const SizedBox(height: 8),
-                    const Text(
-                      'Saving to storage...',
-                      style: TextStyle(color: Colors.white54, fontSize: 14),
+                    Text(
+                      LocalizationService.get('saving'),
+                      style: GoogleFonts.inter(
+                        color: Colors.white54,
+                        fontSize: 14,
+                      ),
                     ),
                   ],
                 ),
@@ -501,35 +611,39 @@ class _DataCaptureScreenState extends State<DataCaptureScreen> {
             ),
 
           // Blink Overlay
-          if (_showBlink) Container(color: Colors.white.withValues(alpha: 0.8)),
+          if (_showBlink) Container(color: Colors.white.withValues(alpha: 0.5)),
         ],
       ),
       floatingActionButton: ScaleButton(
         onTap: _takePicture,
         child: Container(
-          width: 80,
-          height: 80,
+          width: 88,
+          height: 88,
           decoration: BoxDecoration(
-            color: Colors.white,
+            color: Colors.white.withValues(alpha: 0.2),
             shape: BoxShape.circle,
-            boxShadow: [
-              BoxShadow(
-                color: Colors.black.withValues(alpha: 0.2),
-                blurRadius: 10,
-                offset: const Offset(0, 4),
-              ),
-            ],
+            border: Border.all(color: Colors.white, width: 4),
           ),
           child: Center(
             child: Container(
-              width: 70,
-              height: 70,
+              width: 72,
+              height: 72,
               decoration: BoxDecoration(
+                color: Colors.white,
                 shape: BoxShape.circle,
-                border: Border.all(color: Colors.black, width: 4),
+                boxShadow: [
+                  BoxShadow(
+                    color: Colors.black.withValues(alpha: 0.3),
+                    blurRadius: 10,
+                  ),
+                ],
               ),
-              child: const Center(
-                child: Icon(Icons.circle, size: 50, color: Colors.red),
+              child: Center(
+                child: Icon(
+                  Icons.camera,
+                  color: Colors.black.withValues(alpha: 0.8),
+                  size: 32,
+                ),
               ),
             ),
           ),
@@ -550,14 +664,21 @@ class _CornerGuide extends StatelessWidget {
     return RotationTransition(
       turns: AlwaysStoppedAnimation(rotation / 360),
       child: Container(
-        width: 32,
-        height: 32,
-        decoration: const BoxDecoration(
-          border: Border(
+        width: 40,
+        height: 40,
+        decoration: BoxDecoration(
+          border: const Border(
             top: BorderSide(color: Colors.white, width: 4),
             left: BorderSide(color: Colors.white, width: 4),
           ),
-          borderRadius: BorderRadius.only(topLeft: Radius.circular(16)),
+          borderRadius: const BorderRadius.only(topLeft: Radius.circular(16)),
+          boxShadow: [
+            BoxShadow(
+              color: Colors.black.withValues(alpha: 0.3),
+              blurRadius: 4,
+              offset: const Offset(1, 1),
+            ),
+          ],
         ),
       ),
     );
@@ -598,7 +719,8 @@ class ScannerOverlayPainter extends CustomPainter {
 
     // 4. Draw the resulting path with a semi-transparent black paint
     final paint = Paint()
-      ..color = Colors.black54
+      ..color = Colors.black
+          .withValues(alpha: 0.7) // Darker for better focus
       ..style = PaintingStyle.fill;
 
     canvas.drawPath(path, paint);

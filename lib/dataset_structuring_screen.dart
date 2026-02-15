@@ -1,8 +1,10 @@
 import 'dart:io';
 import 'package:flutter/material.dart';
+import 'package:google_fonts/google_fonts.dart';
 import 'package:path_provider/path_provider.dart';
 import 'package:share_plus/share_plus.dart';
 import 'services/structuring_service.dart';
+import 'services/localization_service.dart';
 
 class DatasetStructuringScreen extends StatefulWidget {
   final String datasetType;
@@ -62,9 +64,9 @@ class _DatasetStructuringScreenState extends State<DatasetStructuringScreen> {
 
   Future<void> _startStructuring() async {
     if (_selectedDatasetPath == null) {
-      ScaffoldMessenger.of(
-        context,
-      ).showSnackBar(const SnackBar(content: Text('Please select a dataset')));
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text(LocalizationService.get('select_dataset'))),
+      ); // Potentially add specific error key if needed, or reuse select_dataset as hint
       return;
     }
 
@@ -100,14 +102,12 @@ class _DatasetStructuringScreenState extends State<DatasetStructuringScreen> {
         setState(() => _statusMessage = 'Compressing dataset...');
         Directory? documentsDir;
         if (Platform.isAndroid) {
-          documentsDir =
-              await getExternalStorageDirectory(); // Or external public?
-          // Use external storage public folder if possible, but scoped storage might block.
-          // Let's use app docs for now, user can find it.
-          // Or better: /Classification/Exports to keep it inside app scope but visible?
+          documentsDir = await getExternalStorageDirectory();
         }
         documentsDir ??= await getApplicationDocumentsDirectory();
-        final exportDir = Directory('${documentsDir.path}/Exports');
+        final exportDir = Directory(
+          '${documentsDir.path}/${widget.datasetType}/Exports',
+        );
 
         final zipFile = await _structuringService.exportDataset(
           sourceDir,
@@ -123,7 +123,9 @@ class _DatasetStructuringScreenState extends State<DatasetStructuringScreen> {
         if (mounted) {
           ScaffoldMessenger.of(context).showSnackBar(
             SnackBar(
-              content: Text('Exported to ${zipFile.path}'),
+              content: Text(
+                '${LocalizationService.get('structuring_complete')} ${zipFile.path}',
+              ),
               action: SnackBarAction(
                 label: 'SHARE',
                 onPressed: () {
@@ -158,61 +160,183 @@ class _DatasetStructuringScreenState extends State<DatasetStructuringScreen> {
   @override
   Widget build(BuildContext context) {
     return Scaffold(
-      appBar: AppBar(title: const Text('Dataset Structuring')),
+      backgroundColor: Theme.of(context).colorScheme.surface,
+      appBar: AppBar(
+        title: Text(
+          LocalizationService.get('structuring_title'),
+          style: GoogleFonts.poppins(fontWeight: FontWeight.w600),
+        ),
+      ),
       body: SingleChildScrollView(
-        padding: const EdgeInsets.all(16.0),
+        padding: const EdgeInsets.all(24.0),
         child: Column(
           crossAxisAlignment: CrossAxisAlignment.stretch,
           children: [
-            DropdownButtonFormField<String>(
-              key: ValueKey(_selectedDatasetPath ?? 'dataset_dropdown'),
-              decoration: const InputDecoration(
-                labelText: 'Select Dataset',
-                border: OutlineInputBorder(),
+            // Dataset Selection
+            Container(
+              padding: const EdgeInsets.symmetric(horizontal: 16),
+              decoration: BoxDecoration(
+                color: Colors.white,
+                borderRadius: BorderRadius.circular(16),
+                border: Border.all(color: Colors.grey.withValues(alpha: 0.2)),
               ),
-              items: _datasets.map((entity) {
-                final name = entity.path.split('/').last;
-                return DropdownMenuItem(value: entity.path, child: Text(name));
-              }).toList(),
-              onChanged: (value) {
-                setState(() {
-                  _selectedDatasetPath = value;
-                });
-              },
+              child: DropdownButtonHideUnderline(
+                child: DropdownButton<String>(
+                  hint: Text(
+                    LocalizationService.get('select_dataset'),
+                    style: GoogleFonts.inter(color: Colors.grey),
+                  ),
+                  value: _selectedDatasetPath,
+                  isExpanded: true,
+                  icon: const Icon(Icons.arrow_drop_down_circle_outlined),
+                  items: _datasets.map((entity) {
+                    final name = entity.path.split('/').last;
+                    return DropdownMenuItem(
+                      value: entity.path,
+                      child: Text(name),
+                    );
+                  }).toList(),
+                  onChanged: (value) {
+                    setState(() {
+                      _selectedDatasetPath = value;
+                    });
+                  },
+                ),
+              ),
             ),
             const SizedBox(height: 24),
 
-            CheckboxListTile(
-              title: const Text('Generate Metadata (classes.txt)'),
-              subtitle: const Text(
-                'Creates a list of class names in the dataset root',
-              ),
-              value: _enableMetadata,
-              onChanged: (val) => setState(() => _enableMetadata = val!),
+            _buildSection(
+              title: "Metadata",
+              icon: Icons.list_alt_rounded,
+              color: Colors.teal,
+              children: [
+                CheckboxListTile(
+                  title: Text(
+                    LocalizationService.get('generate_metadata'),
+                    style: GoogleFonts.inter(fontWeight: FontWeight.w500),
+                  ),
+                  subtitle: Text(
+                    'Creates a list of class names in the dataset root',
+                    style: GoogleFonts.inter(fontSize: 12, color: Colors.grey),
+                  ),
+                  value: _enableMetadata,
+                  activeColor: Colors.teal,
+                  onChanged: (val) => setState(() => _enableMetadata = val!),
+                ),
+              ],
             ),
-            CheckboxListTile(
-              title: const Text('Export to Zip'),
-              subtitle: const Text('Compresses the dataset into a .zip file'),
-              value: _enableExport,
-              onChanged: (val) => setState(() => _enableExport = val!),
+            const SizedBox(height: 16),
+            _buildSection(
+              title: "Export",
+              icon: Icons.archive_outlined,
+              color: Colors.orange,
+              children: [
+                CheckboxListTile(
+                  title: Text(
+                    LocalizationService.get('export_zip'),
+                    style: GoogleFonts.inter(fontWeight: FontWeight.w500),
+                  ),
+                  subtitle: Text(
+                    'Compresses the dataset into a .zip file',
+                    style: GoogleFonts.inter(fontSize: 12, color: Colors.grey),
+                  ),
+                  value: _enableExport,
+                  activeColor: Colors.orange,
+                  onChanged: (val) => setState(() => _enableExport = val!),
+                ),
+              ],
             ),
+
             const SizedBox(height: 32),
 
             if (_isProcessing) ...[
-              LinearProgressIndicator(value: _progress),
+              LinearProgressIndicator(value: _progress, color: Colors.teal),
               const SizedBox(height: 8),
-              Text(_statusMessage, textAlign: TextAlign.center),
-            ] else
-              ElevatedButton(
-                onPressed: _startStructuring,
-                style: ElevatedButton.styleFrom(
-                  padding: const EdgeInsets.symmetric(vertical: 16),
-                  backgroundColor: Colors.teal,
+              Text(
+                _statusMessage,
+                textAlign: TextAlign.center,
+                style: GoogleFonts.inter(
+                  color: Colors.teal,
+                  fontWeight: FontWeight.bold,
                 ),
-                child: const Text('Run Stucturing'),
+              ),
+            ] else
+              SizedBox(
+                height: 56,
+                child: ElevatedButton(
+                  onPressed: _startStructuring,
+                  style: ElevatedButton.styleFrom(
+                    backgroundColor: Colors.teal,
+                    foregroundColor: Colors.white,
+                    shape: RoundedRectangleBorder(
+                      borderRadius: BorderRadius.circular(16),
+                    ),
+                  ),
+                  child: Text(
+                    LocalizationService.get('run_structuring'),
+                    style: GoogleFonts.inter(
+                      fontSize: 16,
+                      fontWeight: FontWeight.bold,
+                    ),
+                  ),
+                ),
               ),
           ],
         ),
+      ),
+    );
+  }
+
+  Widget _buildSection({
+    required String title,
+    required IconData icon,
+    required Color color,
+    required List<Widget> children,
+  }) {
+    return Container(
+      decoration: BoxDecoration(
+        color: Colors.white,
+        borderRadius: BorderRadius.circular(24),
+        border: Border.all(color: Colors.grey.withValues(alpha: 0.1)),
+        boxShadow: [
+          BoxShadow(
+            color: const Color(0xFFF1F4F9),
+            blurRadius: 10,
+            offset: const Offset(0, 4),
+          ),
+        ],
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Padding(
+            padding: const EdgeInsets.all(16),
+            child: Row(
+              children: [
+                Container(
+                  padding: const EdgeInsets.all(8),
+                  decoration: BoxDecoration(
+                    color: color.withValues(alpha: 0.1),
+                    borderRadius: BorderRadius.circular(8),
+                  ),
+                  child: Icon(icon, color: color, size: 24),
+                ),
+                const SizedBox(width: 12),
+                Text(
+                  title,
+                  style: GoogleFonts.inter(
+                    fontSize: 18,
+                    fontWeight: FontWeight.bold,
+                  ),
+                ),
+              ],
+            ),
+          ),
+          const Divider(height: 1),
+          ...children,
+          const SizedBox(height: 8),
+        ],
       ),
     );
   }

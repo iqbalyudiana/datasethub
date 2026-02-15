@@ -1,5 +1,6 @@
 import 'dart:io';
 import 'package:flutter/material.dart';
+import 'package:google_fonts/google_fonts.dart';
 
 class ImagePreviewScreen extends StatelessWidget {
   final String imagePath;
@@ -31,43 +32,86 @@ class ImagePreviewScreen extends StatelessWidget {
             bottom: 30,
             left: 20,
             right: 20,
-            child: Row(
-              mainAxisAlignment: MainAxisAlignment.spaceEvenly,
-              children: [
-                ElevatedButton.icon(
-                  onPressed: onRetake,
-                  icon: const Icon(Icons.refresh, color: Colors.white),
-                  label: const Text(
-                    'Retake',
-                    style: TextStyle(color: Colors.white),
-                  ),
-                  style: ElevatedButton.styleFrom(
-                    backgroundColor: Colors.redAccent.withValues(alpha: 0.8),
-                    padding: const EdgeInsets.symmetric(
-                      horizontal: 24,
-                      vertical: 12,
-                    ),
-                  ),
+            child: Container(
+              padding: const EdgeInsets.symmetric(horizontal: 20, vertical: 24),
+              decoration: BoxDecoration(
+                gradient: LinearGradient(
+                  begin: Alignment.bottomCenter,
+                  end: Alignment.topCenter,
+                  colors: [
+                    Colors.black.withValues(alpha: 0.8),
+                    Colors.transparent,
+                  ],
                 ),
-                ElevatedButton.icon(
-                  onPressed: onSave,
-                  icon: const Icon(Icons.check, color: Colors.white),
-                  label: const Text(
-                    'Save',
-                    style: TextStyle(color: Colors.white),
+              ),
+              child: Row(
+                mainAxisAlignment: MainAxisAlignment.spaceEvenly,
+                children: [
+                  _ActionButton(
+                    label: 'Retake',
+                    icon: Icons.refresh,
+                    color: Colors.white,
+                    backgroundColor: Colors.white.withValues(alpha: 0.2),
+                    onTap: onRetake,
                   ),
-                  style: ElevatedButton.styleFrom(
-                    backgroundColor: Colors.green.withValues(alpha: 0.8),
-                    padding: const EdgeInsets.symmetric(
-                      horizontal: 24,
-                      vertical: 12,
-                    ),
+                  _ActionButton(
+                    label: 'Save',
+                    icon: Icons.check,
+                    color: Colors.white,
+                    backgroundColor: Colors.greenAccent.withValues(alpha: 0.8),
+                    onTap: onSave,
                   ),
-                ),
-              ],
+                ],
+              ),
             ),
           ),
         ],
+      ),
+    );
+  }
+}
+
+class _ActionButton extends StatelessWidget {
+  final String label;
+  final IconData icon;
+  final Color color;
+  final Color backgroundColor;
+  final VoidCallback onTap;
+
+  const _ActionButton({
+    required this.label,
+    required this.icon,
+    required this.color,
+    required this.backgroundColor,
+    required this.onTap,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    return InkWell(
+      onTap: onTap,
+      borderRadius: BorderRadius.circular(30),
+      child: Container(
+        padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 16),
+        decoration: BoxDecoration(
+          color: backgroundColor,
+          borderRadius: BorderRadius.circular(30),
+          border: Border.all(color: Colors.white.withValues(alpha: 0.2)),
+        ),
+        child: Row(
+          children: [
+            Icon(icon, color: color),
+            const SizedBox(width: 8),
+            Text(
+              label,
+              style: GoogleFonts.inter(
+                color: color,
+                fontSize: 16,
+                fontWeight: FontWeight.w600,
+              ),
+            ),
+          ],
+        ),
       ),
     );
   }

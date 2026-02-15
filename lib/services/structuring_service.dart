@@ -49,6 +49,17 @@ class StructuringService {
             classes.add(name);
           }
         });
+
+        // If no classes found via folders, and we have images, assume the dataset itself is the class
+        if (classes.isEmpty) {
+          final hasImages = children.whereType<File>().any((f) {
+            final ext = path.extension(f.path).toLowerCase();
+            return ext == '.jpg' || ext == '.jpeg' || ext == '.png';
+          });
+          if (hasImages) {
+            classes.add(path.basename(datasetDir.path));
+          }
+        }
       }
 
       final sortedClasses = classes.toList()..sort();

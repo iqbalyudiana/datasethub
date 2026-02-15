@@ -1,5 +1,6 @@
 import 'dart:io';
 import 'package:flutter/material.dart';
+import 'package:google_fonts/google_fonts.dart';
 import 'package:path_provider/path_provider.dart';
 import 'dataset_config_screen.dart';
 import 'dataset_viewer_screen.dart';
@@ -128,12 +129,28 @@ class _DatasetGroupScreenState extends State<DatasetGroupScreen> {
     }
   }
 
+  Future<int> _getImageCount(Directory dir) async {
+    try {
+      final entities = await dir.list(recursive: true).toList();
+      return entities.whereType<File>().where((file) {
+        final lowerPath = file.path.toLowerCase();
+        return lowerPath.endsWith('.jpg') ||
+            lowerPath.endsWith('.jpeg') ||
+            lowerPath.endsWith('.png');
+      }).length;
+    } catch (e) {
+      return 0;
+    }
+  }
+
   @override
   Widget build(BuildContext context) {
     return Scaffold(
+      backgroundColor: Theme.of(context).colorScheme.surface,
       appBar: AppBar(
         title: Text(
           _isSelectionMode ? '${_selectedPaths.length} Selected' : widget.title,
+          style: GoogleFonts.poppins(fontWeight: FontWeight.w600),
         ),
         leading: _isSelectionMode
             ? IconButton(
@@ -157,13 +174,13 @@ class _DatasetGroupScreenState extends State<DatasetGroupScreen> {
       body: RefreshIndicator(
         onRefresh: _loadDatasets,
         child: ListView(
-          padding: const EdgeInsets.all(16.0),
+          padding: const EdgeInsets.all(24.0),
           children: [
             if (!_isSelectionMode) ...[
               FadeInSlide(
                 index: 0,
                 child: _LayerCard(
-                  title: ' Data Capture ',
+                  title: 'Data Capture',
                   subtitle: 'Capture images using camera',
                   icon: Icons.camera_alt,
                   color: Colors.blueAccent,
@@ -236,25 +253,25 @@ class _DatasetGroupScreenState extends State<DatasetGroupScreen> {
                   },
                 ),
               ),
-              const SizedBox(height: 24),
+              const SizedBox(height: 32),
               FadeInSlide(
                 index: 3,
                 child: Row(
                   children: [
                     Icon(Icons.history, color: Colors.grey[600]),
-                    const SizedBox(width: 8),
+                    const SizedBox(width: 12),
                     Text(
                       'Captured Datasets',
-                      style: TextStyle(
+                      style: GoogleFonts.poppins(
                         fontSize: 18,
-                        fontWeight: FontWeight.bold,
+                        fontWeight: FontWeight.w600,
                         color: Colors.grey[800],
                       ),
                     ),
                   ],
                 ),
               ),
-              const SizedBox(height: 12),
+              const SizedBox(height: 16),
             ],
             if (_isLoading)
               const Center(
@@ -265,29 +282,29 @@ class _DatasetGroupScreenState extends State<DatasetGroupScreen> {
               )
             else if (_datasets.isEmpty)
               Container(
-                padding: const EdgeInsets.all(24.0),
+                padding: const EdgeInsets.all(32.0),
                 decoration: BoxDecoration(
-                  color: Colors.grey[100],
-                  borderRadius: BorderRadius.circular(16),
-                  border: Border.all(color: Colors.grey[300]!),
+                  color: Colors.white,
+                  borderRadius: BorderRadius.circular(24),
+                  border: Border.all(color: Colors.grey.withValues(alpha: 0.2)),
                 ),
                 child: Column(
                   children: [
-                    Icon(Icons.folder_open, size: 48, color: Colors.grey[400]),
-                    const SizedBox(height: 12),
+                    Icon(Icons.folder_open, size: 64, color: Colors.grey[300]),
+                    const SizedBox(height: 16),
                     Text(
                       'No datasets found',
-                      style: TextStyle(
-                        fontSize: 16,
-                        fontWeight: FontWeight.bold,
+                      style: GoogleFonts.poppins(
+                        fontSize: 18,
+                        fontWeight: FontWeight.w600,
                         color: Colors.grey[600],
                       ),
                     ),
-                    const SizedBox(height: 4),
+                    const SizedBox(height: 8),
                     Text(
                       'Tap "Data Capture" to start collecting images.',
                       textAlign: TextAlign.center,
-                      style: TextStyle(color: Colors.grey[500]),
+                      style: GoogleFonts.inter(color: Colors.grey[500]),
                     ),
                   ],
                 ),
@@ -302,37 +319,53 @@ class _DatasetGroupScreenState extends State<DatasetGroupScreen> {
                   final folderName = folder.path.split('/').last;
                   final isSelected = _selectedPaths.contains(folder.path);
 
-                  return Card(
-                    elevation: isSelected ? 4 : 0,
-                    color: isSelected ? Colors.blue.shade50 : Colors.grey[50],
-                    shape: RoundedRectangleBorder(
-                      borderRadius: BorderRadius.circular(12),
-                      side: BorderSide(
-                        color: isSelected ? Colors.blue : Colors.grey[200]!,
+                  return Container(
+                    margin: const EdgeInsets.only(bottom: 12),
+                    decoration: BoxDecoration(
+                      color: isSelected
+                          ? Colors.blue.withValues(alpha: 0.05)
+                          : Colors.white,
+                      borderRadius: BorderRadius.circular(16),
+                      border: Border.all(
+                        color: isSelected
+                            ? Colors.blue
+                            : Colors.grey.withValues(alpha: 0.2),
                         width: isSelected ? 2 : 1,
                       ),
+                      boxShadow: [
+                        if (!isSelected)
+                          BoxShadow(
+                            color: Colors.black.withValues(alpha: 0.03),
+                            blurRadius: 8,
+                            offset: const Offset(0, 4),
+                          ),
+                      ],
                     ),
-                    margin: const EdgeInsets.only(bottom: 8),
                     child: ListTile(
+                      contentPadding: const EdgeInsets.all(16),
                       leading: Container(
-                        padding: const EdgeInsets.all(8),
+                        padding: const EdgeInsets.all(12),
                         decoration: BoxDecoration(
                           color: widget.color.withValues(alpha: 0.1),
-                          borderRadius: BorderRadius.circular(8),
+                          borderRadius: BorderRadius.circular(12),
                         ),
-                        child: Icon(Icons.folder, color: widget.color),
+                        child: Icon(
+                          Icons.folder,
+                          color: widget.color,
+                          size: 28,
+                        ),
                       ),
                       title: Text(
                         folderName,
-                        style: const TextStyle(fontWeight: FontWeight.bold),
+                        style: GoogleFonts.poppins(fontWeight: FontWeight.w600),
                       ),
                       subtitle: FutureBuilder<int>(
-                        future: Directory(folder.path).list().length,
+                        future: _getImageCount(Directory(folder.path)),
                         builder: (context, snapshot) {
                           if (snapshot.hasData) {
                             return Text(
                               '${snapshot.data} images',
-                              style: TextStyle(color: Colors.grey[600]),
+                              style: GoogleFonts.inter(color: Colors.grey[600]),
                             );
                           }
                           return const Text('Calculating...');
@@ -343,12 +376,14 @@ class _DatasetGroupScreenState extends State<DatasetGroupScreen> {
                               isSelected
                                   ? Icons.check_circle
                                   : Icons.circle_outlined,
-                              color: isSelected ? Colors.blue : Colors.grey,
+                              color: isSelected
+                                  ? Colors.blue
+                                  : Colors.grey[400],
                             )
-                          : const Icon(
+                          : Icon(
                               Icons.arrow_forward_ios,
-                              size: 14,
-                              color: Colors.grey,
+                              size: 16,
+                              color: Colors.grey[400],
                             ),
                       onLongPress: () {
                         setState(() {

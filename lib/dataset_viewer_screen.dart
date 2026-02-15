@@ -1,5 +1,7 @@
 import 'dart:io';
 import 'package:flutter/material.dart';
+import 'package:google_fonts/google_fonts.dart';
+import 'services/localization_service.dart';
 
 class DatasetViewerScreen extends StatefulWidget {
   final Directory datasetDir;
@@ -11,8 +13,7 @@ class DatasetViewerScreen extends StatefulWidget {
 }
 
 class _DatasetViewerScreenState extends State<DatasetViewerScreen> {
-  List<File> _images = [];
-  bool _isLoading = true;
+  List<FileSystemEntity> _images = [];
   final Set<String> _selectedImagePaths = {};
   bool _isSelectionMode = false;
 
@@ -22,50 +23,22 @@ class _DatasetViewerScreenState extends State<DatasetViewerScreen> {
     _loadImages();
   }
 
-  Future<void> _loadImages() async {
+  void _loadImages() {
     try {
-      if (await widget.datasetDir.exists()) {
-        final List<FileSystemEntity> entities = widget.datasetDir
-            .listSync()
-            .toList();
-
-        final images = entities.whereType<File>().where((file) {
-          final lowerPath = file.path.toLowerCase();
-          return lowerPath.endsWith('.jpg') ||
-              lowerPath.endsWith('.jpeg') ||
-              lowerPath.endsWith('.png');
-        }).toList();
-
-        // Sort by modification time (newest first)
-        images.sort(
-          (a, b) => b.lastModifiedSync().compareTo(a.lastModifiedSync()),
-        );
-
-        if (mounted) {
-          setState(() {
-            _images = images;
-            _isLoading = false;
-            _selectedImagePaths.clear();
-            _isSelectionMode = false;
-          });
-        }
-      } else {
-        if (mounted) {
-          setState(() {
-            _images = [];
-            _isLoading = false;
-            _selectedImagePaths.clear();
-            _isSelectionMode = false;
-          });
-        }
-      }
+      final List<FileSystemEntity> files = widget.datasetDir
+          .listSync()
+          .where(
+            (file) =>
+                file.path.toLowerCase().endsWith('.jpg') ||
+                file.path.toLowerCase().endsWith('.png') ||
+                file.path.toLowerCase().endsWith('.jpeg'),
+          )
+          .toList();
+      setState(() {
+        _images = files;
+      });
     } catch (e) {
-      debugPrint('Error loading images: $e');
-      if (mounted) {
-        setState(() {
-          _isLoading = false;
-        });
-      }
+      debugPrint("Error loading images: $e");
     }
   }
 
@@ -78,36 +51,47 @@ class _DatasetViewerScreenState extends State<DatasetViewerScreen> {
         }
       } else {
         _selectedImagePaths.add(path);
+        _isSelectionMode = true;
       }
     });
   }
 
-  Future<void> _deleteSelectedImages() async {
-    final confirmed = await showDialog<bool>(
+  Future<void> _deleteSelected() async {
+    final confirm = await showDialog<bool>(
       context: context,
-      builder: (context) => AlertDialog(
-        title: const Text('Delete Images'),
-        content: Text(
-          'Are you sure you want to delete ${_selectedImagePaths.length} image(s)? This cannot be undone.',
+      builder: (ctx) => AlertDialog(
+        title: Text(
+          LocalizationService.get('delete_images'),
+          style: GoogleFonts.poppins(fontWeight: FontWeight.bold),
         ),
+        content: Text(
+          '${LocalizationService.get('delete_confirmation')} ${_selectedImagePaths.length} ${LocalizationService.get('images')}?',
+          style: GoogleFonts.inter(),
+        ),
+        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(20)),
         actions: [
           TextButton(
-            onPressed: () => Navigator.pop(context, false),
-            child: const Text('Cancel'),
+            onPressed: () => Navigator.pop(ctx, false),
+            child: Text(
+              LocalizationService.get('cancel'),
+              style: GoogleFonts.inter(color: Colors.grey[600]),
+            ),
           ),
           TextButton(
-            onPressed: () => Navigator.pop(context, true),
-            child: const Text('Delete', style: TextStyle(color: Colors.red)),
+            onPressed: () => Navigator.pop(ctx, true),
+            child: Text(
+              LocalizationService.get('delete'),
+              style: GoogleFonts.inter(
+                color: Colors.redAccent,
+                fontWeight: FontWeight.bold,
+              ),
+            ),
           ),
         ],
       ),
     );
 
-    if (confirmed == true) {
-      setState(() {
-        _isLoading = true;
-      });
-
+    if (confirm == true) {
       for (final path in _selectedImagePaths) {
         try {
           final file = File(path);
@@ -115,26 +99,15 @@ class _DatasetViewerScreenState extends State<DatasetViewerScreen> {
             await file.delete();
           }
         } catch (e) {
-          debugPrint('Error deleting $path: $e');
+          debugPrint("Error deleting: $e");
         }
       }
-
-      await _loadImages();
+      setState(() {
+        _selectedImagePaths.clear();
+        _isSelectionMode = false;
+      });
+      _loadImages();
     }
-  }
-
-  void _openGallery(int index) {
-    if (_isSelectionMode) {
-      _toggleSelection(_images[index].path);
-      return;
-    }
-    Navigator.push(
-      context,
-      MaterialPageRoute(
-        builder: (context) =>
-            _GalleryPhotoViewWrapper(images: _images, initialIndex: index),
-      ),
-    );
   }
 
   @override
@@ -142,177 +115,165 @@ class _DatasetViewerScreenState extends State<DatasetViewerScreen> {
     final folderName = widget.datasetDir.path.split('/').last;
 
     return Scaffold(
-      body: CustomScrollView(
-        slivers: [
-          SliverAppBar(
-            title: Text(
-              _isSelectionMode
-                  ? '${_selectedImagePaths.length} Selected'
-                  : folderName,
-            ),
-            pinned: true,
-            expandedHeight: 120.0,
-            leading: _isSelectionMode
-                ? IconButton(
-                    icon: const Icon(Icons.close),
-                    onPressed: () {
-                      setState(() {
-                        _selectedImagePaths.clear();
-                        _isSelectionMode = false;
-                      });
-                    },
-                  )
-                : const BackButton(),
-            actions: [
-              if (_isSelectionMode)
-                IconButton(
-                  icon: const Icon(Icons.delete, color: Colors.redAccent),
-                  onPressed: _deleteSelectedImages,
-                ),
-            ],
-            flexibleSpace: FlexibleSpaceBar(
-              background: Container(
-                decoration: BoxDecoration(
-                  gradient: LinearGradient(
-                    colors: [Colors.teal.shade800, Colors.teal.shade400],
-                    begin: Alignment.topLeft,
-                    end: Alignment.bottomRight,
-                  ),
-                ),
-              ),
-              titlePadding: const EdgeInsets.only(left: 16, bottom: 16),
-              title: _isSelectionMode
-                  ? null
-                  : Text(
-                      '${_images.length} items',
-                      style: const TextStyle(
-                        fontSize: 12,
-                        color: Colors.white70,
-                      ),
-                    ),
-            ),
-          ),
-          if (_isLoading)
-            const SliverFillRemaining(
-              child: Center(child: CircularProgressIndicator()),
-            )
-          else if (_images.isEmpty)
-            const SliverFillRemaining(
-              child: Center(
-                child: Column(
-                  mainAxisAlignment: MainAxisAlignment.center,
-                  children: [
-                    Icon(
-                      Icons.image_not_supported,
-                      size: 64,
-                      color: Colors.grey,
-                    ),
-                    SizedBox(height: 16),
-                    Text(
-                      'No images found',
-                      style: TextStyle(color: Colors.grey),
-                    ),
-                  ],
-                ),
-              ),
-            )
-          else
-            SliverPadding(
-              padding: const EdgeInsets.all(8.0),
-              sliver: SliverGrid(
-                gridDelegate: const SliverGridDelegateWithFixedCrossAxisCount(
-                  crossAxisCount: 3,
-                  crossAxisSpacing: 8.0,
-                  mainAxisSpacing: 8.0,
-                  childAspectRatio: 1.0,
-                ),
-                delegate: SliverChildBuilderDelegate((context, index) {
-                  final imageFile = _images[index];
-                  final isSelected = _selectedImagePaths.contains(
-                    imageFile.path,
-                  );
-
-                  return GestureDetector(
-                    onTap: () => _openGallery(index),
-                    onLongPress: () {
-                      setState(() {
-                        _isSelectionMode = true;
-                        _toggleSelection(imageFile.path);
-                      });
-                    },
-                    child: Hero(
-                      tag: imageFile.path,
-                      child: Stack(
-                        fit: StackFit.expand,
-                        children: [
-                          Container(
-                            decoration: BoxDecoration(
-                              borderRadius: BorderRadius.circular(12),
-                              boxShadow: [
-                                BoxShadow(
-                                  color: Colors.black.withValues(alpha: 0.1),
-                                  blurRadius: 4,
-                                  offset: const Offset(0, 2),
-                                ),
-                              ],
-                              border: isSelected
-                                  ? Border.all(
-                                      color: Colors.blueAccent,
-                                      width: 3,
-                                    )
-                                  : null,
-                            ),
-                            child: ClipRRect(
-                              borderRadius: BorderRadius.circular(12),
-                              child: Image.file(
-                                imageFile,
-                                fit: BoxFit.cover,
-                                cacheWidth: 300, // Optimize memory
-                              ),
-                            ),
-                          ),
-                          if (isSelected)
-                            Container(
-                              decoration: BoxDecoration(
-                                color: Colors.blue.withValues(alpha: 0.3),
-                                borderRadius: BorderRadius.circular(12),
-                              ),
-                              child: const Center(
-                                child: Icon(
-                                  Icons.check_circle,
-                                  color: Colors.white,
-                                  size: 32,
-                                ),
-                              ),
-                            ),
-                        ],
-                      ),
-                    ),
-                  );
-                }, childCount: _images.length),
-              ),
+      backgroundColor: Theme.of(context).colorScheme.surface,
+      appBar: AppBar(
+        title: Text(
+          _isSelectionMode
+              ? '${_selectedImagePaths.length} ${LocalizationService.get('selected')}'
+              : folderName,
+          style: GoogleFonts.poppins(fontWeight: FontWeight.w600),
+        ),
+        actions: [
+          if (_isSelectionMode)
+            IconButton(
+              icon: const Icon(Icons.delete_outline, color: Colors.redAccent),
+              onPressed: _deleteSelected,
             ),
         ],
+      ),
+      body: Column(
+        children: [
+          Padding(
+            padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
+            child: Row(
+              mainAxisAlignment: MainAxisAlignment.spaceBetween,
+              children: [
+                _isSelectionMode
+                    ? const SizedBox.shrink()
+                    : Text(
+                        '${_images.length} ${LocalizationService.get('items')}',
+                        style: GoogleFonts.inter(
+                          color: Colors.grey,
+                          fontWeight: FontWeight.w500,
+                        ),
+                      ),
+                if (_isSelectionMode)
+                  TextButton(
+                    onPressed: () {
+                      setState(() {
+                        if (_selectedImagePaths.length == _images.length) {
+                          _selectedImagePaths.clear();
+                          _isSelectionMode = false;
+                        } else {
+                          for (var img in _images) {
+                            _selectedImagePaths.add(img.path);
+                          }
+                        }
+                      });
+                    },
+                    child: Text(
+                      _selectedImagePaths.length == _images.length
+                          ? "Deselect All"
+                          : "Select All",
+                      style: GoogleFonts.inter(fontWeight: FontWeight.w600),
+                    ),
+                  ),
+              ],
+            ),
+          ),
+          Expanded(
+            child: _images.isEmpty
+                ? Center(
+                    child: Text(
+                      LocalizationService.get('no_images'),
+                      style: GoogleFonts.inter(
+                        fontSize: 16,
+                        color: Colors.grey,
+                      ),
+                    ),
+                  )
+                : GridView.builder(
+                    padding: const EdgeInsets.all(16),
+                    gridDelegate:
+                        const SliverGridDelegateWithFixedCrossAxisCount(
+                          crossAxisCount: 3,
+                          crossAxisSpacing: 8,
+                          mainAxisSpacing: 8,
+                        ),
+                    itemCount: _images.length,
+                    itemBuilder: (context, index) {
+                      final file = _images[index];
+                      final isSelected = _selectedImagePaths.contains(
+                        file.path,
+                      );
+
+                      return GestureDetector(
+                        onTap: () {
+                          if (_isSelectionMode) {
+                            _toggleSelection(file.path);
+                          } else {
+                            _showImageDetail(index);
+                          }
+                        },
+                        onLongPress: () => _toggleSelection(file.path),
+                        child: Stack(
+                          fit: StackFit.expand,
+                          children: [
+                            ClipRRect(
+                              borderRadius: BorderRadius.circular(12),
+                              child: Image.file(
+                                File(file.path),
+                                fit: BoxFit.cover,
+                                cacheWidth: 300,
+                              ),
+                            ),
+                            if (_isSelectionMode)
+                              Container(
+                                decoration: BoxDecoration(
+                                  color: isSelected
+                                      ? Colors.black.withValues(alpha: 0.4)
+                                      : Colors.transparent,
+                                  borderRadius: BorderRadius.circular(12),
+                                  border: isSelected
+                                      ? Border.all(
+                                          color: Colors.white,
+                                          width: 3,
+                                        )
+                                      : null,
+                                ),
+                                child: isSelected
+                                    ? const Center(
+                                        child: Icon(
+                                          Icons.check_circle,
+                                          color: Colors.white,
+                                          size: 32,
+                                        ),
+                                      )
+                                    : null,
+                              ),
+                          ],
+                        ),
+                      );
+                    },
+                  ),
+          ),
+        ],
+      ),
+    );
+  }
+
+  void _showImageDetail(int initialIndex) {
+    Navigator.push(
+      context,
+      MaterialPageRoute(
+        builder: (context) =>
+            _ImageDetailScreen(images: _images, initialIndex: initialIndex),
       ),
     );
   }
 }
 
-class _GalleryPhotoViewWrapper extends StatefulWidget {
-  final List<File> images;
+class _ImageDetailScreen extends StatefulWidget {
+  final List<FileSystemEntity> images;
   final int initialIndex;
 
-  const _GalleryPhotoViewWrapper({
-    required this.images,
-    required this.initialIndex,
-  });
+  const _ImageDetailScreen({required this.images, required this.initialIndex});
 
   @override
-  State<_GalleryPhotoViewWrapper> createState() =>
-      _GalleryPhotoViewWrapperState();
+  State<_ImageDetailScreen> createState() => _ImageDetailScreenState();
 }
 
-class _GalleryPhotoViewWrapperState extends State<_GalleryPhotoViewWrapper> {
+class _ImageDetailScreenState extends State<_ImageDetailScreen> {
   late PageController _pageController;
   late int _currentIndex;
 
@@ -328,11 +289,11 @@ class _GalleryPhotoViewWrapperState extends State<_GalleryPhotoViewWrapper> {
     return Scaffold(
       backgroundColor: Colors.black,
       appBar: AppBar(
-        backgroundColor: Colors.black,
+        backgroundColor: Colors.black.withValues(alpha: 0.5),
         iconTheme: const IconThemeData(color: Colors.white),
         title: Text(
           '${_currentIndex + 1} / ${widget.images.length}',
-          style: const TextStyle(color: Colors.white),
+          style: GoogleFonts.inter(color: Colors.white),
         ),
       ),
       body: PageView.builder(
@@ -344,13 +305,9 @@ class _GalleryPhotoViewWrapperState extends State<_GalleryPhotoViewWrapper> {
           });
         },
         itemBuilder: (context, index) {
-          final imageFile = widget.images[index];
-          return Hero(
-            tag: imageFile.path,
+          return Center(
             child: InteractiveViewer(
-              minScale: 0.5,
-              maxScale: 4.0,
-              child: Image.file(imageFile, fit: BoxFit.contain),
+              child: Image.file(File(widget.images[index].path)),
             ),
           );
         },
