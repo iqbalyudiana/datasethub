@@ -1,5 +1,6 @@
 import 'dart:io';
 import 'dart:convert';
+import 'dart:async';
 import 'dart:math' as math;
 
 import 'package:camera/camera.dart';
@@ -33,6 +34,8 @@ class DataCaptureScreen extends StatefulWidget {
   State<DataCaptureScreen> createState() => _DataCaptureScreenState();
 }
 
+enum CaptureMode { manual, interval, motion }
+
 class _DataCaptureScreenState extends State<DataCaptureScreen>
     with TickerProviderStateMixin {
   CameraController? _controller;
@@ -45,6 +48,23 @@ class _DataCaptureScreenState extends State<DataCaptureScreen>
   String? _lastCapturedImagePath;
   late AnimationController _focusController;
   late Animation<double> _focusAnimation;
+
+  // Advanced Camera Settings
+  FocusMode _focusMode = FocusMode.auto;
+  ExposureMode _exposureMode = ExposureMode.auto;
+  CaptureMode _captureMode = CaptureMode.manual;
+
+  // Strategy Params
+  int _intervalDurationMs = 1000;
+  double _motionSensitivity = 50.0; // Threshold 0-100
+
+  // Strategy State
+  Timer? _intervalTimer;
+  bool _isCapturingActive = false;
+  // Motion Capture Logic (Placeholder)
+  // img.Image? _previousMotionFrame;
+  // bool _isMotionProcessing = false;
+  // int _motionCooldown = 0;
 
   @override
   void initState() {
@@ -413,7 +433,7 @@ class _DataCaptureScreenState extends State<DataCaptureScreen>
         actions: [
           if (_isCameraInitialized)
             Padding(
-              padding: const EdgeInsets.only(right: 16.0),
+              padding: const EdgeInsets.only(right: 8.0),
               child: IconButton(
                 icon: Icon(
                   _isFlashOn ? Icons.flash_on_rounded : Icons.flash_off_rounded,
@@ -425,6 +445,16 @@ class _DataCaptureScreenState extends State<DataCaptureScreen>
                 onPressed: _toggleFlash,
               ),
             ),
+          Padding(
+            padding: const EdgeInsets.only(right: 16.0),
+            child: IconButton(
+              icon: const Icon(Icons.settings_rounded, color: Colors.white),
+              style: IconButton.styleFrom(
+                backgroundColor: Colors.white.withValues(alpha: 0.1),
+              ),
+              onPressed: _showSettings,
+            ),
+          ),
         ],
       ),
       extendBodyBehindAppBar: true,
@@ -615,22 +645,38 @@ class _DataCaptureScreenState extends State<DataCaptureScreen>
         ],
       ),
       floatingActionButton: ScaleButton(
-        onTap: _takePicture,
+        onTap: () {
+          if (_captureMode == CaptureMode.manual) {
+            _takePicture();
+          } else {
+            _toggleCaptureState();
+          }
+        },
         child: Container(
           width: 88,
           height: 88,
           decoration: BoxDecoration(
-            color: Colors.white.withValues(alpha: 0.2),
+            color: _isCapturingActive
+                ? Colors.red.withValues(alpha: 0.2)
+                : Colors.white.withValues(alpha: 0.2),
             shape: BoxShape.circle,
-            border: Border.all(color: Colors.white, width: 4),
+            border: Border.all(
+              color: _isCapturingActive ? Colors.redAccent : Colors.white,
+              width: 4,
+            ),
           ),
           child: Center(
             child: Container(
               width: 72,
               height: 72,
               decoration: BoxDecoration(
-                color: Colors.white,
-                shape: BoxShape.circle,
+                color: _isCapturingActive ? Colors.red : Colors.white,
+                shape: _isCapturingActive
+                    ? BoxShape.rectangle
+                    : BoxShape.circle,
+                borderRadius: _isCapturingActive
+                    ? BorderRadius.circular(16)
+                    : null,
                 boxShadow: [
                   BoxShadow(
                     color: Colors.black.withValues(alpha: 0.3),
@@ -640,8 +686,10 @@ class _DataCaptureScreenState extends State<DataCaptureScreen>
               ),
               child: Center(
                 child: Icon(
-                  Icons.camera,
-                  color: Colors.black.withValues(alpha: 0.8),
+                  _isCapturingActive ? Icons.stop : Icons.camera,
+                  color: _isCapturingActive
+                      ? Colors.white
+                      : Colors.black.withValues(alpha: 0.8),
                   size: 32,
                 ),
               ),
@@ -651,6 +699,262 @@ class _DataCaptureScreenState extends State<DataCaptureScreen>
       ),
       floatingActionButtonLocation: FloatingActionButtonLocation.centerFloat,
     );
+  }
+
+  void _toggleCaptureState() {
+    if (_isCapturingActive) {
+      _stopCaptureStrategies();
+    } else {
+      setState(() {
+        _isCapturingActive = true;
+      });
+      if (_captureMode == CaptureMode.interval) {
+        _startIntervalCapture();
+      } else if (_captureMode == CaptureMode.motion) {
+        _startMotionCapture();
+      }
+    }
+  }
+
+  void _startIntervalCapture() {
+    _intervalTimer = Timer.periodic(
+      Duration(milliseconds: _intervalDurationMs),
+      (timer) {
+        if (mounted && _isCapturingActive && !_isProcessing) {
+          _takePicture();
+        }
+      },
+    );
+  }
+
+  void _startMotionCapture() {
+    // Placeholder for Motion Capture
+    // Real implementation would require startImageStream and pixel analysis
+    ScaffoldMessenger.of(context).showSnackBar(
+      const SnackBar(content: Text("Motion Capture logic to be implemented")),
+    );
+    // Auto-stop for now since it's not implemented
+    setState(() {
+      _isCapturingActive = false;
+    });
+  }
+
+  void _stopCaptureStrategies() {
+    _intervalTimer?.cancel();
+    _intervalTimer = null;
+    setState(() {
+      _isCapturingActive = false;
+    });
+  }
+
+  void _showSettings() {
+    showModalBottomSheet(
+      context: context,
+      backgroundColor: Colors.grey[900],
+      shape: const RoundedRectangleBorder(
+        borderRadius: BorderRadius.vertical(top: Radius.circular(24)),
+      ),
+      builder: (context) {
+        return StatefulBuilder(
+          builder: (context, setModalState) {
+            return Container(
+              padding: const EdgeInsets.all(24),
+              child: Column(
+                mainAxisSize: MainAxisSize.min,
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Text(
+                    "Camera Settings",
+                    style: GoogleFonts.poppins(
+                      color: Colors.white,
+                      fontSize: 20,
+                      fontWeight: FontWeight.bold,
+                    ),
+                  ),
+                  const SizedBox(height: 24),
+
+                  // Focus & Exposure Row
+                  Row(
+                    children: [
+                      Expanded(
+                        child: Column(
+                          crossAxisAlignment: CrossAxisAlignment.start,
+                          children: [
+                            Text(
+                              "Focus",
+                              style: GoogleFonts.inter(
+                                color: Colors.grey[400],
+                                fontSize: 12,
+                              ),
+                            ),
+                            const SizedBox(height: 8),
+                            SwitchListTile(
+                              title: Text(
+                                _focusMode == FocusMode.auto
+                                    ? "Auto"
+                                    : "Locked",
+                                style: GoogleFonts.inter(color: Colors.white),
+                              ),
+                              value: _focusMode == FocusMode.auto,
+                              activeTrackColor: Colors.tealAccent,
+                              contentPadding: EdgeInsets.zero,
+                              onChanged: (val) {
+                                setModalState(() {
+                                  _focusMode = val
+                                      ? FocusMode.auto
+                                      : FocusMode.locked;
+                                });
+                                _updateFocusMode(_focusMode);
+                                setState(() {});
+                              },
+                            ),
+                          ],
+                        ),
+                      ),
+                      Expanded(
+                        child: Column(
+                          crossAxisAlignment: CrossAxisAlignment.start,
+                          children: [
+                            Text(
+                              "Exposure",
+                              style: GoogleFonts.inter(
+                                color: Colors.grey[400],
+                                fontSize: 12,
+                              ),
+                            ),
+                            const SizedBox(height: 8),
+                            SwitchListTile(
+                              title: Text(
+                                _exposureMode == ExposureMode.auto
+                                    ? "Auto"
+                                    : "Locked",
+                                style: GoogleFonts.inter(color: Colors.white),
+                              ),
+                              value: _exposureMode == ExposureMode.auto,
+                              activeTrackColor: Colors.tealAccent,
+                              contentPadding: EdgeInsets.zero,
+                              onChanged: (val) {
+                                setModalState(() {
+                                  _exposureMode = val
+                                      ? ExposureMode.auto
+                                      : ExposureMode.locked;
+                                });
+                                _updateExposureMode(_exposureMode);
+                                setState(() {});
+                              },
+                            ),
+                          ],
+                        ),
+                      ),
+                    ],
+                  ),
+                  const Divider(color: Colors.white24, height: 32),
+
+                  // Capture Mode
+                  Text(
+                    "Capture Mode",
+                    style: GoogleFonts.inter(
+                      color: Colors.grey[400],
+                      fontSize: 12,
+                    ),
+                  ),
+                  const SizedBox(height: 12),
+                  SingleChildScrollView(
+                    scrollDirection: Axis.horizontal,
+                    child: Row(
+                      children: CaptureMode.values.map((mode) {
+                        final isSelected = _captureMode == mode;
+                        return Padding(
+                          padding: const EdgeInsets.only(right: 8),
+                          child: ChoiceChip(
+                            label: Text(
+                              mode.name.toUpperCase(),
+                              style: TextStyle(
+                                color: isSelected
+                                    ? Colors.white
+                                    : Colors.black87,
+                                fontWeight: FontWeight.bold,
+                              ),
+                            ),
+                            selected: isSelected,
+                            selectedColor: Colors.teal,
+                            backgroundColor: Colors.grey[800],
+                            onSelected: (selected) {
+                              if (selected) {
+                                setModalState(() {
+                                  _captureMode = mode;
+                                });
+                                _updateCaptureMode(mode);
+                                setState(() {});
+                              }
+                            },
+                          ),
+                        );
+                      }).toList(),
+                    ),
+                  ),
+
+                  // Conditional Params
+                  if (_captureMode == CaptureMode.interval) ...[
+                    const SizedBox(height: 16),
+                    Text(
+                      "Interval: ${_intervalDurationMs}ms",
+                      style: GoogleFonts.inter(color: Colors.white),
+                    ),
+                    Slider(
+                      value: _intervalDurationMs.toDouble(),
+                      min: 500,
+                      max: 5000,
+                      divisions: 9,
+                      activeColor: Colors.tealAccent,
+                      onChanged: (val) {
+                        setModalState(() => _intervalDurationMs = val.toInt());
+                        setState(() {});
+                      },
+                    ),
+                  ],
+
+                  if (_captureMode == CaptureMode.motion) ...[
+                    const SizedBox(height: 16),
+                    Text(
+                      "Sensitivity: ${_motionSensitivity.toInt()}%",
+                      style: GoogleFonts.inter(color: Colors.white),
+                    ),
+                    Slider(
+                      value: _motionSensitivity,
+                      min: 10,
+                      max: 100,
+                      divisions: 9,
+                      activeColor: Colors.tealAccent,
+                      onChanged: (val) {
+                        setModalState(() => _motionSensitivity = val);
+                        setState(() {});
+                      },
+                    ),
+                  ],
+                ],
+              ),
+            );
+          },
+        );
+      },
+    );
+  }
+
+  Future<void> _updateFocusMode(FocusMode mode) async {
+    if (_controller != null && _controller!.value.isInitialized) {
+      await _controller!.setFocusMode(mode);
+    }
+  }
+
+  Future<void> _updateExposureMode(ExposureMode mode) async {
+    if (_controller != null && _controller!.value.isInitialized) {
+      await _controller!.setExposureMode(mode);
+    }
+  }
+
+  void _updateCaptureMode(CaptureMode mode) {
+    _stopCaptureStrategies();
   }
 }
 

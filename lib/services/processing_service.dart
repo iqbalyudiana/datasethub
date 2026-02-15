@@ -3,6 +3,7 @@ import 'dart:math';
 import 'package:flutter/foundation.dart';
 import 'package:image/image.dart' as img;
 import 'package:path/path.dart' as path;
+import '../models/annotation.dart';
 
 class ProcessingService {
   Future<void> processDataset({
@@ -132,13 +133,42 @@ class ProcessingService {
           csvBuffer.writeln('$finalFileName,$className');
         }
 
-        // Generate YOLO Label (Class ID, Center 0.5, 0.5, Width 1.0, Height 1.0)
-        if (generateYolo) {
+        // Generate/Copy YOLO Label
+        final sourceTxtPath = path.setExtension(file.path, '.txt');
+        final sourceTxt = File(sourceTxtPath);
+        List<Annotation> annotations = [];
+
+        if (await sourceTxt.exists()) {
+          // Read existing manual annotations
+          final lines = await sourceTxt.readAsLines();
+          annotations = lines
+              .where((l) => l.trim().isNotEmpty)
+              .map((l) => Annotation.fromYoloLine(l))
+              .toList();
+
+          // Write to destination
+          final destTxtPath = path.join(
+            destFolder.path,
+            '${path.basenameWithoutExtension(finalFileName)}.txt',
+          );
+          await File(destTxtPath).writeAsString(lines.join('\n'));
+        } else if (generateYolo) {
+          // Generate dummy only if requested and no manual labels exist
           final yoloPath = path.join(
             destFolder.path,
             '${path.basenameWithoutExtension(finalFileName)}.txt',
           );
           await File(yoloPath).writeAsString("$classId 0.5 0.5 1.0 1.0");
+          // Create dummy annotation object for augmentation
+          annotations.add(
+            Annotation(
+              classId: classId,
+              xCenter: 0.5,
+              yCenter: 0.5,
+              width: 1.0,
+              height: 1.0,
+            ),
+          );
         }
 
         // Augmentations (Only if NOT splitting test set, usually we don't augment test set)
@@ -156,6 +186,7 @@ class ProcessingService {
             gray: grayscale,
             generateYolo: generateYolo,
             classId: classId,
+            annotations: annotations,
           );
         }
 
@@ -188,6 +219,7 @@ class ProcessingService {
     required bool gray,
     required bool generateYolo,
     required int classId,
+    List<Annotation>? annotations,
   }) async {
     if (flipH) {
       final augmented = img.copyFlip(
@@ -198,7 +230,21 @@ class ProcessingService {
       await File(
         path.join(destFolder.path, name),
       ).writeAsBytes(img.encodeJpg(augmented));
-      if (generateYolo) {
+
+      if (annotations != null && annotations.isNotEmpty) {
+        final newAnns = annotations.map((a) {
+          return Annotation(
+            classId: a.classId,
+            xCenter: 1.0 - a.xCenter, // Flip X
+            yCenter: a.yCenter,
+            width: a.width,
+            height: a.height,
+          );
+        }).toList();
+        await File(
+          path.join(destFolder.path, '${baseName}_flipH.txt'),
+        ).writeAsString(newAnns.map((a) => a.toYoloLine()).join('\n'));
+      } else if (generateYolo) {
         await File(
           path.join(destFolder.path, '${baseName}_flipH.txt'),
         ).writeAsString("$classId 0.5 0.5 1.0 1.0");
@@ -213,7 +259,21 @@ class ProcessingService {
       await File(
         path.join(destFolder.path, name),
       ).writeAsBytes(img.encodeJpg(augmented));
-      if (generateYolo) {
+
+      if (annotations != null && annotations.isNotEmpty) {
+        final newAnns = annotations.map((a) {
+          return Annotation(
+            classId: a.classId,
+            xCenter: a.xCenter,
+            yCenter: 1.0 - a.yCenter, // Flip Y
+            width: a.width,
+            height: a.height,
+          );
+        }).toList();
+        await File(
+          path.join(destFolder.path, '${baseName}_flipV.txt'),
+        ).writeAsString(newAnns.map((a) => a.toYoloLine()).join('\n'));
+      } else if (generateYolo) {
         await File(
           path.join(destFolder.path, '${baseName}_flipV.txt'),
         ).writeAsString("$classId 0.5 0.5 1.0 1.0");

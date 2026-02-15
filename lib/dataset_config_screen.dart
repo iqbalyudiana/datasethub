@@ -220,6 +220,61 @@ class _DatasetConfigScreenState extends State<DatasetConfigScreen> {
               child: Column(
                 crossAxisAlignment: CrossAxisAlignment.start,
                 children: [
+                  if (widget.datasetType == 'Object Detection')
+                    Padding(
+                      padding: const EdgeInsets.only(
+                        left: 16,
+                        right: 16,
+                        bottom: 8,
+                      ),
+                      child: Row(
+                        children: [
+                          Text(
+                            "YOLO Presets:",
+                            style: GoogleFonts.inter(
+                              fontSize: 12,
+                              fontWeight: FontWeight.w600,
+                              color: Colors.grey[700],
+                            ),
+                          ),
+                          const SizedBox(width: 8),
+                          Expanded(
+                            child: SingleChildScrollView(
+                              scrollDirection: Axis.horizontal,
+                              child: Row(
+                                children: [416, 640, 1280].map((res) {
+                                  final isSelected = _outputResolution == res;
+                                  return Padding(
+                                    padding: const EdgeInsets.only(right: 8),
+                                    child: ChoiceChip(
+                                      label: Text(
+                                        "${res}px",
+                                        style: TextStyle(
+                                          color: isSelected
+                                              ? Colors.white
+                                              : Colors.black87,
+                                          fontSize: 12,
+                                        ),
+                                      ),
+                                      selected: isSelected,
+                                      selectedColor: const Color(0xFFFF9800),
+                                      backgroundColor: Colors.grey[100],
+                                      onSelected: (bool selected) {
+                                        if (selected) {
+                                          setState(() {
+                                            _outputResolution = res;
+                                          });
+                                        }
+                                      },
+                                    ),
+                                  );
+                                }).toList(),
+                              ),
+                            ),
+                          ),
+                        ],
+                      ),
+                    ),
                   SliderTheme(
                     data: SliderTheme.of(context).copyWith(
                       activeTrackColor: const Color(0xFFFF9800),
@@ -234,8 +289,8 @@ class _DatasetConfigScreenState extends State<DatasetConfigScreen> {
                     child: Slider(
                       value: _outputResolution.toDouble(),
                       min: 64,
-                      max: 1080,
-                      divisions: 15,
+                      max: 1280, // Increased max to cover 1280
+                      divisions: (1280 - 64) ~/ 32, // More granular
                       onChanged: (value) {
                         setState(() {
                           _outputResolution = value.toInt();

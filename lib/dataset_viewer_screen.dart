@@ -2,6 +2,7 @@ import 'dart:io';
 import 'package:flutter/material.dart';
 import 'package:google_fonts/google_fonts.dart';
 import 'services/localization_service.dart';
+import 'screens/annotation_screen.dart';
 
 class DatasetViewerScreen extends StatefulWidget {
   final Directory datasetDir;
@@ -295,6 +296,25 @@ class _ImageDetailScreenState extends State<_ImageDetailScreen> {
           '${_currentIndex + 1} / ${widget.images.length}',
           style: GoogleFonts.inter(color: Colors.white),
         ),
+        actions: [
+          TextButton.icon(
+            onPressed: () {
+              Navigator.push(
+                context,
+                MaterialPageRoute(
+                  builder: (context) => AnnotationScreen(
+                    imageFile: File(widget.images[_currentIndex].path),
+                  ),
+                ),
+              );
+            },
+            icon: const Icon(Icons.edit_square, color: Colors.white),
+            label: Text(
+              "Annotate",
+              style: GoogleFonts.inter(color: Colors.white),
+            ),
+          ),
+        ],
       ),
       body: PageView.builder(
         controller: _pageController,
