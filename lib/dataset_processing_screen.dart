@@ -1,5 +1,6 @@
 // ignore_for_file: deprecated_member_use
 import 'dart:io';
+import 'services/qc_service.dart';
 import 'package:flutter/material.dart';
 import 'package:path_provider/path_provider.dart';
 import 'package:google_fonts/google_fonts.dart';
@@ -21,6 +22,8 @@ class DatasetProcessingScreen extends StatefulWidget {
 
 class _DatasetProcessingScreenState extends State<DatasetProcessingScreen> {
   final ProcessingService _processingService = ProcessingService();
+  final QualityControlService _qcService =
+      QualityControlService(); // Add QC Service
 
   List<FileSystemEntity> _datasets = [];
   String? _selectedDatasetPath;
@@ -41,6 +44,12 @@ class _DatasetProcessingScreenState extends State<DatasetProcessingScreen> {
   bool _flipVertical = false;
   bool _rotate = false;
   bool _grayscale = false;
+  // Advanced Augmentations
+  bool _brightness = false;
+  bool _blur = false;
+  bool _noise = false;
+  bool _mosaic = false;
+  bool _filterQuality = false; // Add Filter Checkbox state
 
   // Automated Labeling Options
   bool _generateLabels = true;
@@ -54,6 +63,170 @@ class _DatasetProcessingScreenState extends State<DatasetProcessingScreen> {
   bool _isProcessing = false;
   double _progress = 0.0;
   String _statusMessage = '';
+
+  // Add Analyze Method
+  Future<void> _analyzeDataset() async {
+    if (_selectedDatasetPath == null) return;
+
+    setState(() {
+      _isProcessing = true;
+      _statusMessage = "Analyzing Dataset Quality...";
+    });
+
+    try {
+      final sourceDir = Directory(_selectedDatasetPath!);
+      final images = sourceDir.listSync().whereType<File>().where((f) {
+        final ext = f.path.toLowerCase();
+        return ext.endsWith('.jpg') ||
+            ext.endsWith('.jpeg') ||
+            ext.endsWith('.png');
+      }).toList();
+
+      int blurryCount = 0;
+      int darkCount = 0;
+      List<String> blurryFiles = [];
+      List<String> darkFiles = [];
+
+      // 1. Image Quality
+      for (var i = 0; i < images.length; i++) {
+        final img = images[i];
+        final blurRes = await _qcService.checkBlur(img);
+        if (blurRes.isIssue) {
+          blurryCount++;
+          blurryFiles.add(img.path.split('/').last);
+        }
+
+        final darkRes = await _qcService.checkExposure(img);
+        if (darkRes.isIssue) {
+          darkCount++;
+          darkFiles.add(img.path.split('/').last);
+        }
+
+        setState(() {
+          _progress = (i + 1) / images.length;
+        });
+      }
+
+      // 2. Duplicates
+      setState(() {
+        _statusMessage = "Checking Duplicates...";
+      });
+      final duplicates = await _qcService.findDuplicates(images);
+
+      // 3. Annotations
+      setState(() {
+        _statusMessage = "Analyzing Annotations...";
+      });
+      final annAnalysis = await _qcService.analyzeAnnotations(
+        sourceDir,
+        images,
+      );
+
+      setState(() {
+        _isProcessing = false;
+        _statusMessage = "";
+      });
+
+      // Show Report Dialog
+      if (mounted) {
+        showDialog(
+          context: context,
+          builder: (ctx) => AlertDialog(
+            title: const Text("Quality Control Report"),
+            content: SingleChildScrollView(
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  _buildQCItem("Total Images", "${images.length}"),
+                  const Divider(),
+                  _buildQCItem(
+                    "Blurry Images",
+                    "$blurryCount",
+                    isBad: blurryCount > 0,
+                  ),
+                  if (blurryCount > 0)
+                    Text(
+                      "e.g. ${blurryFiles.take(3).join(', ')}...",
+                      style: TextStyle(fontSize: 12, color: Colors.grey),
+                    ),
+
+                  _buildQCItem(
+                    "Underexposed",
+                    "$darkCount",
+                    isBad: darkCount > 0,
+                  ),
+
+                  _buildQCItem(
+                    "Duplicate Groups",
+                    "${duplicates.length}",
+                    isBad: duplicates.isNotEmpty,
+                  ),
+
+                  const Divider(),
+                  const Text(
+                    "Annotations:",
+                    style: TextStyle(fontWeight: FontWeight.bold),
+                  ),
+                  _buildQCItem("Total Boxes", "${annAnalysis.totalBoxes}"),
+                  _buildQCItem(
+                    "Tiny Objects (<3%)",
+                    "${annAnalysis.tinyObjectFiles.length}",
+                    isBad: annAnalysis.tinyObjectFiles.isNotEmpty,
+                  ),
+
+                  const SizedBox(height: 8),
+                  const Text(
+                    "Class Balance:",
+                    style: TextStyle(fontWeight: FontWeight.bold),
+                  ),
+                  if (annAnalysis.classCounts.isEmpty)
+                    const Text(
+                      "No annotations found.",
+                      style: TextStyle(color: Colors.grey),
+                    ),
+                  ...annAnalysis.classCounts.entries.map(
+                    (e) => Text("Class ${e.key}: ${e.value} instances"),
+                  ),
+                ],
+              ),
+            ),
+            actions: [
+              TextButton(
+                onPressed: () => Navigator.pop(ctx),
+                child: const Text("Close"),
+              ),
+            ],
+          ),
+        );
+      }
+    } catch (e) {
+      setState(() {
+        _isProcessing = false;
+        _statusMessage = "Error: $e";
+      });
+      debugPrint("QC Error: $e");
+    }
+  }
+
+  Widget _buildQCItem(String label, String value, {bool isBad = false}) {
+    return Padding(
+      padding: const EdgeInsets.symmetric(vertical: 4),
+      child: Row(
+        mainAxisAlignment: MainAxisAlignment.spaceBetween,
+        children: [
+          Text(label),
+          Text(
+            value,
+            style: TextStyle(
+              fontWeight: FontWeight.bold,
+              color: isBad ? Colors.red : Colors.green,
+            ),
+          ),
+        ],
+      ),
+    );
+  }
 
   @override
   void initState() {
@@ -123,6 +296,10 @@ class _DatasetProcessingScreenState extends State<DatasetProcessingScreen> {
         flipVertical: _flipVertical,
         rotate: _rotate,
         grayscale: _grayscale,
+        brightness: _brightness,
+        blur: _blur,
+        noise: _noise,
+        mosaic: _mosaic,
         split: _enableSplit,
         trainSplit: _splitValues.start / 100,
         validSplit: (_splitValues.end - _splitValues.start) / 100,
@@ -132,6 +309,7 @@ class _DatasetProcessingScreenState extends State<DatasetProcessingScreen> {
         generateYolo: _generateYolo,
         classId: int.tryParse(_classIdController.text) ?? 0,
         exportFormat: _exportFormat,
+        filterQuality: _filterQuality, // Pass filter option
         onProgress: (current, total) {
           setState(() {
             _progress = current / total;
@@ -235,26 +413,50 @@ class _DatasetProcessingScreenState extends State<DatasetProcessingScreen> {
                       horizontal: 16.0,
                       vertical: 8.0,
                     ),
-                    child: Row(
+                    child: Column(
                       children: [
-                        Expanded(
-                          child: TextField(
-                            controller: _widthController,
-                            decoration: const InputDecoration(
-                              labelText: 'Width (px)',
-                            ),
-                            keyboardType: TextInputType.number,
-                          ),
+                        // Presets
+                        Row(
+                          mainAxisAlignment: MainAxisAlignment.spaceEvenly,
+                          children: [
+                            _buildResizePresetBtn('640', 640),
+                            _buildResizePresetBtn('416', 416),
+                            _buildResizePresetBtn('512', 512),
+                          ],
                         ),
-                        const SizedBox(width: 16),
-                        Expanded(
-                          child: TextField(
-                            controller: _heightController,
-                            decoration: const InputDecoration(
-                              labelText: 'Height (px)',
+                        const SizedBox(height: 12),
+                        Row(
+                          children: [
+                            Expanded(
+                              child: TextField(
+                                controller: _widthController,
+                                decoration: const InputDecoration(
+                                  labelText: 'Width (px)',
+                                  border: OutlineInputBorder(),
+                                  contentPadding: EdgeInsets.symmetric(
+                                    horizontal: 12,
+                                    vertical: 8,
+                                  ),
+                                ),
+                                keyboardType: TextInputType.number,
+                              ),
                             ),
-                            keyboardType: TextInputType.number,
-                          ),
+                            const SizedBox(width: 16),
+                            Expanded(
+                              child: TextField(
+                                controller: _heightController,
+                                decoration: const InputDecoration(
+                                  labelText: 'Height (px)',
+                                  border: OutlineInputBorder(),
+                                  contentPadding: EdgeInsets.symmetric(
+                                    horizontal: 12,
+                                    vertical: 8,
+                                  ),
+                                ),
+                                keyboardType: TextInputType.number,
+                              ),
+                            ),
+                          ],
                         ),
                       ],
                     ),
@@ -458,11 +660,85 @@ class _DatasetProcessingScreenState extends State<DatasetProcessingScreen> {
                     value: _grayscale,
                     onChanged: (val) => setState(() => _grayscale = val!),
                   ),
+                  const Divider(),
+                  Padding(
+                    padding: const EdgeInsets.symmetric(
+                      horizontal: 16,
+                      vertical: 8,
+                    ),
+                    child: Text(
+                      "Advanced Augmentations",
+                      style: GoogleFonts.inter(
+                        fontWeight: FontWeight.bold,
+                        color: Colors.pink,
+                      ),
+                    ),
+                  ),
+                  CheckboxListTile(
+                    title: const Text('Brightness (+/- 20%)'),
+                    value: _brightness,
+                    controlAffinity: ListTileControlAffinity.leading,
+                    activeColor: Colors.pink,
+                    onChanged: (val) => setState(() => _brightness = val!),
+                  ),
+                  CheckboxListTile(
+                    title: const Text('Blur (Gaussian)'),
+                    value: _blur,
+                    controlAffinity: ListTileControlAffinity.leading,
+                    activeColor: Colors.pink,
+                    onChanged: (val) => setState(() => _blur = val!),
+                  ),
+                  CheckboxListTile(
+                    title: const Text('Noise (Salt & Pepper)'),
+                    value: _noise,
+                    controlAffinity: ListTileControlAffinity.leading,
+                    activeColor: Colors.pink,
+                    onChanged: (val) => setState(() => _noise = val!),
+                  ),
+                  CheckboxListTile(
+                    title: const Text('Mosaic (4-image Grid)'),
+                    subtitle: const Text('High Intensity Augmentation'),
+                    value: _mosaic,
+                    controlAffinity: ListTileControlAffinity.leading,
+                    activeColor: Colors.pink,
+                    onChanged: (val) => setState(() => _mosaic = val!),
+                  ),
                 ],
               ],
             ),
+            const SizedBox(height: 16),
+            _buildSection(
+              title: "Quality Control",
+              icon: Icons.high_quality_rounded,
+              color: Colors.red,
+              children: [
+                SwitchListTile(
+                  title: const Text("Filter Poor Quality"),
+                  subtitle: const Text(
+                    "Skip blurry, dark, or duplicate images",
+                  ),
+                  value: _filterQuality,
+                  activeTrackColor: Colors.red,
+                  onChanged: (val) => setState(() => _filterQuality = val),
+                ),
+                Padding(
+                  padding: const EdgeInsets.symmetric(
+                    horizontal: 16.0,
+                    vertical: 8.0,
+                  ),
+                  child: OutlinedButton.icon(
+                    onPressed: _isProcessing ? null : _analyzeDataset,
+                    icon: const Icon(Icons.analytics_outlined),
+                    label: const Text("Analyze Dataset Quality"),
+                    style: OutlinedButton.styleFrom(
+                      foregroundColor: Colors.red,
+                      side: const BorderSide(color: Colors.red),
+                    ),
+                  ),
+                ),
+              ],
+            ),
             const SizedBox(height: 32),
-
             if (_isProcessing) ...[
               LinearProgressIndicator(
                 value: _progress,
@@ -553,6 +829,39 @@ class _DatasetProcessingScreenState extends State<DatasetProcessingScreen> {
           ...children,
           const SizedBox(height: 8),
         ],
+      ),
+    );
+  }
+
+  Widget _buildResizePresetBtn(String label, int size) {
+    bool isSelected =
+        _widthController.text == size.toString() &&
+        _heightController.text == size.toString();
+    return InkWell(
+      onTap: () {
+        setState(() {
+          _widthController.text = size.toString();
+          _heightController.text = size.toString();
+        });
+      },
+      child: Container(
+        padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
+        decoration: BoxDecoration(
+          color: isSelected ? Colors.blue : Colors.grey.withValues(alpha: 0.1),
+          borderRadius: BorderRadius.circular(8),
+          border: Border.all(
+            color: isSelected
+                ? Colors.blue
+                : Colors.grey.withValues(alpha: 0.3),
+          ),
+        ),
+        child: Text(
+          label,
+          style: GoogleFonts.inter(
+            color: isSelected ? Colors.white : Colors.black87,
+            fontWeight: FontWeight.bold,
+          ),
+        ),
       ),
     );
   }

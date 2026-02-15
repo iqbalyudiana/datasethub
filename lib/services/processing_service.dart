@@ -1,9 +1,11 @@
 import 'dart:io';
 import 'dart:math';
 import 'package:flutter/foundation.dart';
+import 'package:crypto/crypto.dart';
 import 'package:image/image.dart' as img;
 import 'package:path/path.dart' as path;
 import '../models/annotation.dart';
+import 'qc_service.dart';
 
 class ProcessingService {
   Future<void> processDataset({
@@ -17,6 +19,10 @@ class ProcessingService {
     required bool flipVertical,
     required bool rotate,
     required bool grayscale,
+    required bool brightness,
+    required bool blur,
+    required bool noise,
+    required bool mosaic,
     required bool split,
     required double trainSplit,
     required double validSplit,
@@ -27,8 +33,11 @@ class ProcessingService {
     bool generateYolo = false,
     int classId = 0, // Default to 0 if not specified
     String exportFormat = 'tree', // 'tree' or 'yolo'
+    bool filterQuality = false, // Add filter option
     required Function(int, int) onProgress, // current, total
   }) async {
+    final qcService = QualityControlService();
+    final Set<String> seenHashes = {};
     try {
       if (!await sourceDir.exists()) {
         throw Exception('Source directory does not exist');
@@ -71,6 +80,21 @@ class ProcessingService {
       // Get class name from parent folder name (assuming sourceDir is the class folder)
       String className = path.basename(sourceDir.path);
 
+      // Try to load classes.txt
+      List<String> allClasses = [];
+      final classesFile = File(path.join(sourceDir.path, 'classes.txt'));
+      if (await classesFile.exists()) {
+        final content = await classesFile.readAsString();
+        allClasses = content
+            .split('\n')
+            .map((e) => e.trim())
+            .where((e) => e.isNotEmpty)
+            .toList();
+      } else {
+        // Fallback or just current class
+        allClasses = [className];
+      }
+
       for (int i = 0; i < images.length; i++) {
         final file = images[i];
 
@@ -80,10 +104,12 @@ class ProcessingService {
           if (i < trainCount) {
             subFolder = 'train';
           } else if (i < trainCount + validCount) {
-            subFolder = 'valid';
+            subFolder = 'val'; // Standardize 'val' instead of 'valid'
           } else {
             subFolder = 'test';
           }
+        } else {
+          subFolder = 'train'; // Default to train if not splitting
         }
 
         Directory destFolder;
@@ -91,12 +117,14 @@ class ProcessingService {
         Directory labelsFolder;
 
         if (exportFormat == 'yolo') {
-          // YOLO Structure: split/images and split/labels
-          final splitDir = subFolder.isEmpty
-              ? outputDir
-              : Directory(path.join(outputDir.path, subFolder));
-          imagesFolder = Directory(path.join(splitDir.path, 'images'));
-          labelsFolder = Directory(path.join(splitDir.path, 'labels'));
+          // YOLO Structure: images/split and labels/split
+          // e.g. output/images/train
+          imagesFolder = Directory(
+            path.join(outputDir.path, 'images', subFolder),
+          );
+          labelsFolder = Directory(
+            path.join(outputDir.path, 'labels', subFolder),
+          );
 
           if (!await imagesFolder.exists()) {
             await imagesFolder.create(recursive: true);
@@ -108,9 +136,15 @@ class ProcessingService {
           destFolder = imagesFolder; // Images go here
         } else {
           // Tree Structure: split/class_name
+          // Maintain legacy 'valid' naming for Tree if desired, assuming 'val' is fine too.
           Directory splitDir = subFolder.isEmpty
               ? outputDir
-              : Directory(path.join(outputDir.path, subFolder));
+              : Directory(
+                  path.join(
+                    outputDir.path,
+                    subFolder == 'val' ? 'valid' : subFolder,
+                  ),
+                );
 
           destFolder = Directory(path.join(splitDir.path, className));
           if (!await destFolder.exists()) {
@@ -123,9 +157,38 @@ class ProcessingService {
 
         // Read image
         final bytes = await file.readAsBytes();
+
+        // QC Checks
+        if (filterQuality) {
+          // 1. Duplicate Check
+          final hash = md5.convert(bytes).toString();
+          if (seenHashes.contains(hash)) {
+            // Skip duplicate
+            onProgress(
+              processedCount,
+              images.length,
+            ); // Still update progress? Or treat as skipped?
+            // If we skip, processedCount might not increment if we use it for total.
+            // But total is images.length. So we should increment processedCount or just ignore?
+            // Let's ignore it for progress but continue loop.
+            continue;
+          }
+          seenHashes.add(hash);
+        }
+
         img.Image? originalImage = img.decodeImage(bytes);
 
         if (originalImage == null) continue;
+
+        if (filterQuality) {
+          // 2. Blur Check
+          final blurRes = qcService.checkBlurImage(originalImage);
+          if (blurRes.isIssue) continue;
+
+          // 3. Exposure Check
+          final darkRes = qcService.checkExposureImage(originalImage);
+          if (darkRes.isIssue) continue;
+        }
 
         // Resize
         img.Image processedImage = originalImage;
@@ -203,7 +266,7 @@ class ProcessingService {
         // Note: Renaming logic for normalized augmentation needs to be handled.
 
         if (augment) {
-          _applyAugmentations(
+          await _applyAugmentations(
             image: processedImage,
             destFolder: destFolder,
             baseName: path.basenameWithoutExtension(finalFileName),
@@ -216,6 +279,13 @@ class ProcessingService {
             annotations: annotations,
             exportFormat: exportFormat,
             labelsFolder: exportFormat == 'yolo' ? labelsFolder : destFolder,
+            brightness: brightness,
+            blur: blur,
+            noise: noise,
+            mosaic: mosaic,
+            allImages: images,
+            targetWidth: resize ? targetWidth : processedImage.width,
+            targetHeight: resize ? targetHeight : processedImage.height,
           );
         }
 
@@ -233,12 +303,11 @@ class ProcessingService {
         await File(csvPath).writeAsString(csvBuffer.toString());
       }
 
-      // Generate data.yaml for YOLO
+      // Generate dataset.yaml for YOLO
       if (exportFormat == 'yolo') {
-        await _generateDataYaml(
+        await _generateDatasetYaml(
           outputDir: outputDir,
-          className: className,
-          classId: classId,
+          allClasses: allClasses,
         );
       }
     } catch (e) {
@@ -260,6 +329,13 @@ class ProcessingService {
     List<Annotation>? annotations,
     required String exportFormat,
     required Directory labelsFolder,
+    required bool brightness,
+    required bool blur,
+    required bool noise,
+    required bool mosaic,
+    required List<File> allImages,
+    required int targetWidth,
+    required int targetHeight,
   }) async {
     if (flipH) {
       final augmented = img.copyFlip(
@@ -354,52 +430,285 @@ class ProcessingService {
         ).writeAsString("$classId 0.5 0.5 1.0 1.0");
       }
     }
+
+    // Advanced Augmentations (Brightness, Blur, Noise)
+    if (brightness) {
+      // Create a brighter version
+      final bright = img.adjustColor(image, brightness: 1.2); // +20%
+      await _saveAugmented(
+        bright,
+        destFolder,
+        '${baseName}_bright',
+        generateYolo,
+        classId,
+        annotations,
+        exportFormat,
+        labelsFolder,
+      );
+
+      // Create a darker version
+      final dark = img.adjustColor(image, brightness: 0.8); // -20%
+      await _saveAugmented(
+        dark,
+        destFolder,
+        '${baseName}_dark',
+        generateYolo,
+        classId,
+        annotations,
+        exportFormat,
+        labelsFolder,
+      );
+    }
+
+    if (blur) {
+      final blurred = img.gaussianBlur(image, radius: 2);
+      await _saveAugmented(
+        blurred,
+        destFolder,
+        '${baseName}_blur',
+        generateYolo,
+        classId,
+        annotations,
+        exportFormat,
+        labelsFolder,
+      );
+    }
+
+    if (noise) {
+      final noisy = _addNoise(image);
+      await _saveAugmented(
+        noisy,
+        destFolder,
+        '${baseName}_noise',
+        generateYolo,
+        classId,
+        annotations,
+        exportFormat,
+        labelsFolder,
+      );
+    }
+
+    if (mosaic && allImages.length >= 4) {
+      await _createMosaic(
+        currentImage: image,
+        currentBaseName: baseName,
+        currentAnnotations: annotations,
+        allImages: allImages,
+        destFolder: destFolder,
+        labelsFolder: labelsFolder,
+        targetWidth: targetWidth,
+        targetHeight: targetHeight,
+        generateYolo: generateYolo,
+        classId: classId,
+        exportFormat: exportFormat,
+      );
+    }
   }
 
-  Future<void> _generateDataYaml({
-    required Directory outputDir,
-    required String className,
-    required int classId,
-  }) async {
-    // In a real multi-class scenario, we'd overlap or merge yamls.
-    // Here we assume single class export per run or simple append.
-    // But usually, we process the whole dataset which might have multiple classes.
-    // The current ProcessingService processes ONE sourceDir (one class usually) at a time.
-    // This is a limitation for generating a GLOBAL data.yaml.
-    // However, we can check if data.yaml exists and append the class name if not present.
+  // Helper to save augmented image and labels
+  Future<void> _saveAugmented(
+    img.Image image,
+    Directory destFolder,
+    String nameWithoutExt,
+    bool generateYolo,
+    int classId,
+    List<Annotation>? annotations,
+    String exportFormat,
+    Directory labelsFolder,
+  ) async {
+    await File(
+      path.join(destFolder.path, '$nameWithoutExt.jpg'),
+    ).writeAsBytes(img.encodeJpg(image));
 
-    final yamlPath = path.join(outputDir.path, 'data.yaml');
+    if (annotations != null && annotations.isNotEmpty) {
+      // Coordinates don't change for color/blur/noise ops
+      await File(
+        path.join(labelsFolder.path, '$nameWithoutExt.txt'),
+      ).writeAsString(annotations.map((a) => a.toYoloLine()).join('\n'));
+    } else if (generateYolo) {
+      await File(
+        path.join(labelsFolder.path, '$nameWithoutExt.txt'),
+      ).writeAsString("$classId 0.5 0.5 1.0 1.0");
+    }
+  }
+
+  Future<void> _createMosaic({
+    required img.Image currentImage,
+    required String currentBaseName,
+    required List<Annotation>? currentAnnotations,
+    required List<File> allImages,
+    required Directory destFolder,
+    required Directory labelsFolder,
+    required int targetWidth,
+    required int targetHeight,
+    required bool generateYolo,
+    required int classId,
+    required String exportFormat,
+  }) async {
+    // 1. Prepare 4 images
+    List<img.Image> mosaicImages = [];
+    List<List<Annotation>> mosaicAnnotations = [];
+
+    // Slot 0: Current Image
+    mosaicImages.add(currentImage);
+    mosaicAnnotations.add(currentAnnotations ?? []);
+
+    // Pick 3 random other images
+    final rng = Random();
+    for (int i = 0; i < 3; i++) {
+      final randomFile = allImages[rng.nextInt(allImages.length)];
+      final bytes = await randomFile.readAsBytes();
+      img.Image? rndImg = img.decodeImage(bytes);
+      if (rndImg == null) {
+        // Fallback to current image if load fails
+        mosaicImages.add(currentImage);
+        mosaicAnnotations.add(currentAnnotations ?? []);
+        continue;
+      }
+      mosaicImages.add(rndImg);
+
+      // Load its annotations
+      List<Annotation> anns = [];
+      final sourceTxtPath = path.setExtension(randomFile.path, '.txt');
+      final sourceTxt = File(sourceTxtPath);
+      if (await sourceTxt.exists()) {
+        final lines = await sourceTxt.readAsLines();
+        anns = lines
+            .where((l) => l.trim().isNotEmpty)
+            .map((l) => Annotation.fromYoloLine(l))
+            .toList();
+      } else if (generateYolo) {
+        anns.add(
+          Annotation(
+            classId: classId,
+            xCenter: 0.5,
+            yCenter: 0.5,
+            width: 1.0,
+            height: 1.0,
+          ),
+        );
+      }
+      mosaicAnnotations.add(anns);
+    }
+
+    // 2. Create Canvas
+    final mosaicCanvas = img.Image(width: targetWidth, height: targetHeight);
+
+    // 3. Place Images & Adjust Labels
+    // We strictly use a 2x2 grid for simplicity
+    // Top-Left (0,0), Top-Right (w/2, 0), Bottom-Left (0, h/2), Bottom-Right (w/2, h/2)
+    final halfW = targetWidth ~/ 2;
+    final halfH = targetHeight ~/ 2;
+
+    List<Annotation> finalAnnotations = [];
+
+    final positions = [
+      Point(0, 0),
+      Point(halfW, 0),
+      Point(0, halfH),
+      Point(halfW, halfH),
+    ];
+
+    for (int i = 0; i < 4; i++) {
+      // Resize to fit quadrant
+      final resized = img.copyResize(
+        mosaicImages[i],
+        width: halfW,
+        height: halfH,
+      );
+
+      // Draw onto canvas
+      img.compositeImage(
+        mosaicCanvas,
+        resized,
+        dstX: positions[i].x.toInt(),
+        dstY: positions[i].y.toInt(),
+      );
+
+      // Adjust Labels
+      // New coordinates are scaled by 0.5 and shifted
+      // Quadrant offsets as ratio (0.0 or 0.5)
+      double offX = (positions[i].x / targetWidth);
+      double offY = (positions[i].y / targetHeight);
+
+      for (var ann in mosaicAnnotations[i]) {
+        // Scale box by 0.5 (since image is half size)
+        double newW = ann.width * 0.5;
+        double newH = ann.height * 0.5;
+        // Scale center and shift
+        double newX = (ann.xCenter * 0.5) + offX;
+        double newY = (ann.yCenter * 0.5) + offY;
+
+        finalAnnotations.add(
+          Annotation(
+            classId: ann.classId,
+            xCenter: newX,
+            yCenter: newY,
+            width: newW,
+            height: newH,
+          ),
+        );
+      }
+    }
+
+    // 4. Save Mosaic
+    final name = '${currentBaseName}_mosaic.jpg';
+    await File(
+      path.join(destFolder.path, name),
+    ).writeAsBytes(img.encodeJpg(mosaicCanvas));
+
+    // 5. Save Labels
+    if (finalAnnotations.isNotEmpty) {
+      await File(
+        path.join(labelsFolder.path, '${currentBaseName}_mosaic.txt'),
+      ).writeAsString(finalAnnotations.map((a) => a.toYoloLine()).join('\n'));
+    }
+  }
+
+  img.Image _addNoise(img.Image image) {
+    final noisy = img.Image.from(image);
+    final rng = Random();
+    for (int y = 0; y < noisy.height; y++) {
+      for (int x = 0; x < noisy.width; x++) {
+        if (rng.nextDouble() < 0.05) {
+          // 5% chance
+          // Salt and Pepper
+          final type = rng.nextBool();
+          noisy.setPixelRgb(
+            x,
+            y,
+            type ? 255 : 0,
+            type ? 255 : 0,
+            type ? 255 : 0,
+          );
+        }
+      }
+    }
+    return noisy;
+  }
+
+  Future<void> _generateDatasetYaml({
+    required Directory outputDir,
+    required List<String> allClasses,
+  }) async {
+    final yamlPath = path.join(outputDir.path, 'dataset.yaml');
     final file = File(yamlPath);
 
-    // We will blindly overwrite or write a simple single-class yaml for now as per requirements
-    // To support multi-class properly, we'd need to know ALL classes upfront or
-    // read existing yaml.
+    // Filter duplicates if any
+    final uniqueClasses = allClasses.toSet().toList();
 
-    // Let's read existing if available to append class?
-    // Parsing YAML manually is hard.
-    // Let's generic a generic template that works for specific single class runs
-    // OR if we assume the user processes multiple classes into the SAME outputDir,
-    // we might want to consolidate.
-
-    // For now, simpler approach: Write a specific YAML for THIS class run.
-    // WARNING: If user runs multiple classes, this might overwrite.
-    // Ideally, specific class names should be collected.
-
-    // Let's assume standard 'classes.txt' exists in outputDir?
-    // Or just write a generic one.
+    // Create class names string
+    final namesStr = uniqueClasses.map((c) => '"$c"').join(', ');
 
     String content =
         '''
-train: ./train/images
-val: ./valid/images
-test: ./test/images
+train: images/train
+val: images/val
+test: images/test
 
-nc: ${classId + 1}
-names: ['$className']
+nc: ${uniqueClasses.length}
+names: [$namesStr]
 ''';
-    // If we want to support appending, we'd need a more robust system.
-    // Given the current architecture (processDataset runs on one folder),
-    // we might just write it.
 
     await file.writeAsString(content);
   }
